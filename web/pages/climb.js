@@ -59,7 +59,7 @@ export async function renderClimb(key) {
       </div>
 
       <div class="card mb-3">
-        <div class="card-header fw-semibold">Per-bin analysis</div>
+        <div class="card-header fw-semibold">Detailed analysis</div>
         <div class="card-body p-2">
           <div id="climb-segment-analysis"></div>
         </div>
@@ -163,7 +163,7 @@ function renderSegmentDetails(members) {
       currentStartDistanceM = rep.start_distance_m;
       renderSegmentMap(mapContainer, currentSegment);
       renderSegmentElevation(currentSegment, currentStartDistanceM);
-      // Per-bin analysis inline, directly on the climb page. The current
+      // Detailed analysis inline, directly on the climb page. The current
       // (latest) attempt's bins show as blue dots so the chosen metric is
       // visible right away; other attempts load as grey dots, with
       // avg/best toggles across all attempts.

@@ -16,7 +16,6 @@ function unitLabel() {
 }
 let monthlyChart = null;
 let categoriesChart = null;
-let countChart = null;
 let weatherChart = null;
 let yoyChart = null;
 let vo2Chart = null;
@@ -63,8 +62,12 @@ function periodRange(now, first = null) {
 
 function previousRange(now) {
   if (period === 'year') {
-    const prevYear = String(Number(now.slice(0, 4)) - 1);
-    return { start: `${prevYear}-01`, end: `${prevYear}-12` };
+    // Year-over-year with a partial current year would compare a few
+    // months against a full previous year; truncate the previous
+    // year at the same month so both windows cover the same span.
+    const y = Number(now.slice(0, 4));
+    const m = now.slice(5, 7);
+    return { start: `${y - 1}-01`, end: `${y - 1}-${m}` };
   }
   if (period === '12m') {
     return { start: addMonths(now, -23), end: addMonths(now, -12) };
@@ -255,7 +258,14 @@ function renderAll() {
   document.getElementById('stats-custom-dates').classList.toggle('d-none', period !== 'custom');
   renderSummary();
   renderAthlete();
-  renderRecords();
+  // Records & best efforts mix sports in the Overall scope (cycling
+  // climbs next to running PRs with no way to compare them); sport
+  // chips give the per-sport record pages.
+  if (sport === null) {
+    document.getElementById('stats-records').innerHTML = '';
+  } else {
+    renderRecords();
+  }
   // Climb profile + climbing records are cycling-only sections.
   if (sport === null || sport === 'cycling') {
     renderProfileHtml();
@@ -279,7 +289,7 @@ function renderAll() {
 // whole card body so the options stay usable in fullscreen; plain charts
 // float just their sized wrapper.
 function attachFullscreenToStats() {
-  const ids = ['stats-profile-chart', 'stats-monthly-chart', 'stats-count-chart',
+  const ids = ['stats-profile-chart', 'stats-monthly-chart',
     'stats-categories-chart', 'stats-weather-chart', 'stats-yoy-chart', 'stats-hr-pace-chart',
     'stats-grade-hr-chart'];
   for (const id of ids) {
@@ -886,13 +896,10 @@ function renderCharts() {
 
   const monthlyTitle = isAllTime ? 'Average distance &amp; elevation per calendar month' : 'Distance &amp; elevation per month';
   const unitWord = sport === 'cycling' ? 'rides' : 'activities';
-  const countTitle = isAllTime ? `Average ${unitWord} per calendar month` : `${unitWord[0].toUpperCase()}${unitWord.slice(1)} per month`;
 
   document.getElementById('stats-charts').innerHTML = `
     ${sectionCard('monthly', monthlyTitle, `
         <div style="height: 280px; position: relative;"><canvas id="stats-monthly-chart"></canvas></div>`)}
-    ${sectionCard('count', countTitle, `
-        <div style="height: 220px; position: relative;"><canvas id="stats-count-chart"></canvas></div>`)}
     ${sectionCard('calendar', 'Activity calendar', `
         <div id="calendar-heatmap" class="overflow-x-auto"></div>
         <p class="small text-muted mb-0 mt-2" id="calendar-note">Hover a day for details.</p>`)}
@@ -919,7 +926,8 @@ function renderCharts() {
   else renderWeather(acts);
   renderYoY(acts);
 
-  // Monthly distance + elevation bars
+  // Monthly distance + elevation bars, with the activity count as a
+  // line on its own right axis (merged: the count alone carried little).
   if (monthlyChart) monthlyChart.destroy();
   monthlyChart = new window.Chart(document.getElementById('stats-monthly-chart').getContext('2d'), {
     type: 'bar',
@@ -931,12 +939,26 @@ function renderCharts() {
           data: distKm,
           backgroundColor: 'rgba(13, 110, 253, 0.7)',
           yAxisID: 'yDist',
+          order: 3,
         },
         {
           label: 'Elevation (m)',
           data: ascentM,
           backgroundColor: 'rgba(25, 135, 84, 0.55)',
           yAxisID: 'yElev',
+          order: 3,
+        },
+        {
+          label: unitLabel(),
+          data: rideCounts.map(v => Number.isFinite(v) ? v : 0),
+          type: 'line',
+          borderColor: 'rgba(111, 66, 193, 0.9)',
+          backgroundColor: 'rgba(111, 66, 193, 0.9)',
+          borderWidth: 2,
+          pointRadius: 2,
+          tension: 0.3,
+          yAxisID: 'yCount',
+          order: 1,
         },
       ]
     },
@@ -949,33 +971,7 @@ function renderCharts() {
         x: { stacked: false, ticks: { maxRotation: 45 } },
         yDist: { position: 'left', title: { display: true, text: 'Distance (km)' } },
         yElev: { position: 'right', title: { display: true, text: 'Elevation (m)' }, grid: { drawOnChartArea: false } },
-      }
-    }
-  });
-
-  // Activities per month
-  if (countChart) countChart.destroy();
-  countChart = new window.Chart(document.getElementById('stats-count-chart').getContext('2d'), {
-    type: 'bar',
-    data: {
-      labels,
-      datasets: [
-        {
-          label: unitLabel(),
-          data: rideCounts.map(v => Number.isFinite(v) ? v : 0),
-          backgroundColor: 'rgba(111, 66, 193, 0.65)',
-          yAxisID: 'yCount',
-        },
-      ]
-    },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      interaction: { mode: 'index', intersect: false },
-      plugins: { legend: { display: true, labels: { boxWidth: 12 } } },
-      scales: {
-        x: { ticks: { maxRotation: 45 } },
-        yCount: { position: 'left', title: { display: true, text: unitLabel() }, ticks: { precision: 1 } },
+        yCount: { position: 'right', title: { display: true, text: unitLabel() }, grid: { drawOnChartArea: false }, ticks: { precision: 0 } },
       }
     }
   });
@@ -1308,21 +1304,86 @@ async function renderGpsHeatmap() {
     const renderer = L.canvas({ padding: 0.2 });
     let i = 0;
     const bounds = L.latLngBounds();
+    // Per-track clustered view for far zooms: at world zoom thin 1-px
+    // lines are invisible, so summarize each track as a pin instead.
+    // Level 1 (world): pin per coarse country grid cell (~500 km).
+    // Level 2 (country→region): pin per ~50 km cell. Close zoom: the
+    // actual tracks. Pins click-zoom to their cell.
+    const tracksData = [];
     for (const tr of tracks) {
       if (!tr || tr.length < 2) continue;
       const latlngs = tr.map(p => [p[0], p[1]]);
       bounds.extend(latlngs);
-      L.polyline(latlngs, {
+      tracksData.push(latlngs);
+    }
+    const cellKey = (lat, lon, size) => `${Math.floor(lat / size)}:${Math.floor(lon / size)}`;
+    const clusterAt = size => {
+      const cells = {};
+      for (const ll of tracksData) {
+        const k = cellKey(ll[0][0], ll[0][1], size);
+        cells[k] = cells[k] || { lat: 0, lon: 0, n: 0 };
+        cells[k].lat += ll[0][0]; cells[k].lon += ll[0][1]; cells[k].n++;
+      }
+      return Object.values(cells).map(c => ({
+        lat: c.lat / c.n, lon: c.lon / c.n, n: c.n,
+        cell: L.latLngBounds(
+          [Math.floor((c.lat) / size) * size, Math.floor((c.lon) / size) * size],
+          [(Math.floor((c.lat) / size) + 1) * size, (Math.floor((c.lon) / size) + 1) * size],
+        ),
+      }));
+    };
+    const countryPins = clusterAt(5);      // ~550 km cells
+    const regionPins = clusterAt(0.5);    // ~55 km cells
+    const pinLayer = L.layerGroup();
+    const pinIcon = (n, big) => L.divIcon({
+      className: 'gps-pin',
+      html: `<div style="width:${big ? 26 : 20}px;height:${big ? 26 : 20}px;border-radius:50%;background:rgba(220,53,69,${big ? 0.92 : 0.8});color:#fff;display:flex;align-items:center;justify-content:center;font-size:${big ? 12 : 10}px;font-weight:700;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.4);">${n}</div>`,
+      iconSize: [big ? 26 : 20, big ? 26 : 20],
+      iconAnchor: [big ? 13 : 10, big ? 13 : 10],
+    });
+    const pin = (c, big) => {
+      const m = L.marker([c.lat, c.lon], { icon: pinIcon(c.n, big) });
+      m.on('click', () => map.fitBounds(c.cell, { maxZoom: 13 }));
+      return m;
+    };
+    for (const c of countryPins) pin(c, true).addTo(pinLayer);
+    const regionLayer = L.layerGroup();
+    for (const c of regionPins) pin(c, false).addTo(regionLayer);
+    for (const ll of tracksData) {
+      L.polyline(ll, {
         color: HEAT_COLORS[i++ % HEAT_COLORS.length],
         weight: 1.5, opacity: 0.25, renderer,
       }).addTo(group);
     }
-    group.addTo(map);
+    // Track layer visible from z11 (city scale); pins take over below,
+    // region pins from z6 (country clusters above that).
+    const TRACK_Z = 11, REGION_Z = 6;
+    const syncLayers = () => {
+      const z = map.getZoom();
+      if (z >= TRACK_Z) {
+        if (map.hasLayer(pinLayer)) map.removeLayer(pinLayer);
+        if (map.hasLayer(regionLayer)) map.removeLayer(regionLayer);
+        if (!map.hasLayer(group)) map.addLayer(group);
+      } else if (z >= REGION_Z) {
+        if (map.hasLayer(pinLayer)) map.removeLayer(pinLayer);
+        if (!map.hasLayer(regionLayer)) map.addLayer(regionLayer);
+        if (map.hasLayer(group)) map.removeLayer(group);
+      } else {
+        if (!map.hasLayer(pinLayer)) map.addLayer(pinLayer);
+        if (map.hasLayer(regionLayer)) map.removeLayer(regionLayer);
+        if (map.hasLayer(group)) map.removeLayer(group);
+      }
+    };
+    map.on('zoomend', syncLayers);
+    syncLayers();
     state.map = map;
     state.layer = group;
     if (bounds.isValid()) map.fitBounds(bounds, { padding: [30, 30] });
     const note = document.getElementById('gps-heat-note');
-    if (note) note.textContent = `${tracks.length} tracks plotted. Roads you have covered most, by GPS pass frequency.`;
+    if (note) {
+      const nCountries = countryPins.length;
+      note.textContent = `${tracksData.length} tracks · ${nCountries} area${nCountries === 1 ? '' : 's'} plotted. Zoom in or click a pin to drill into regions and tracks.`;
+    }
     // Fullscreen floats the map's sized wrapper so the card header stays.
     attachFullscreen(holder.querySelector('.card'), div);
   } catch (err) {
@@ -1336,24 +1397,27 @@ function renderCalendar(acts) {
   if (!el) return;
   const isAll = sport === null;
 
-  // Distance + per-sport distance per day.
+  // Distance + moving time + per-sport time per day.
   const byDay = {};
   for (const a of acts) {
     const day = a.start_time.slice(0, 10);
-    if (!byDay[day]) byDay[day] = { km: 0, sports: {} };
+    if (!byDay[day]) byDay[day] = { km: 0, time: 0, sports: {} };
     byDay[day].km += (a.distance || 0);
+    byDay[day].time += (a.moving_time || 0);
     const s = a.sport || 'cycling';
-    byDay[day].sports[s] = (byDay[day].sports[s] || 0) + (a.distance || 0);
+    const cell = byDay[day].sports[s] = byDay[day].sports[s] || { km: 0, time: 0 };
+    cell.km += (a.distance || 0);
+    cell.time += (a.moving_time || 0);
   }
   const days = Object.keys(byDay).sort();
   if (!days.length) { el.innerHTML = '<p class="text-muted mb-0">No activities.</p>'; return; }
 
   const SPORT_COLORS = { cycling: '#0d6efd', running: '#fd7e14', hiking: '#198754' };
   const sportColor = s => SPORT_COLORS[s] || '#adb5bd';
-  const dayColor = day => {
-    const dom = Object.entries(byDay[day].sports).sort((a, b) => b[1] - a[1])[0];
-    return dom ? sportColor(dom[0]) : '#adb5bd';
-  };
+  const sportIcon = s => s === 'cycling' ? '🚴' : s === 'running' ? '🏃' : s === 'hiking' ? '🥾' : '🏅';
+  // Dominant sport by TIME, not distance: a long hike with a short bike
+  // commute reads as a hiking day, whatever the kilometres say.
+  const daySport = day => Object.entries(byDay[day].sports).sort((a, b) => b[1].time - a[1].time)[0]?.[0];
   const isDark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
   const greenColors = isDark
     ? ['#0e4429', '#006d32', '#26a641', '#39d353']
@@ -1390,6 +1454,7 @@ function renderCalendar(acts) {
   }
 
   const cellSize = 13, gap = 2;
+  const DAY_LETTERS = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
   const yearRows = years.map(yr => {
     const grid = [[], [], [], [], [], [], []];
     yr.weeks.forEach(w => {
@@ -1397,13 +1462,37 @@ function renderCalendar(acts) {
         const cell = w.days[di];
         if (!cell) { grid[di].push(`<td class="cal-empty" style="width:${cellSize}px;height:${cellSize}px;"></td>`); continue; }
         const lvl = cell.km > 0 ? Math.min(4, 1 + thresholds.filter(t => cell.km > t).length) : 0;
-        const bg = isAll
-          ? (cell.km > 0 ? hexToRgba(dayColor(cell.day), 0.35 + 0.65 * lvl / 4) : 'var(--bs-secondary-bg)')
-          : (lvl > 0 ? greenColors[lvl - 1] : 'var(--bs-secondary-bg)');
-        grid[di].push(`<td class="cal-cell" data-day="${cell.day}" data-km="${cell.km}" style="width:${cellSize}px;height:${cellSize}px;background:${bg};border:1px solid var(--bs-border-color);border-radius:2px;" title="${cell.day}: ${cell.km ? cell.km.toFixed(1) + ' km' : 'no activity'}"></td>`);
+        const info = byDay[cell.day];
+        // Multi-sport day: linear-gradient hard stops split the square
+        // by each sport's share of the day's time (dominant by time).
+        let bg;
+        if (isAll && info && Object.keys(info.sports).length > 1) {
+          const entries = Object.entries(info.sports).sort((a, b) => b[1].time - a[1].time);
+          const total = entries.reduce((s, [, v]) => s + v.time, 0) || 1;
+          let acc = 0;
+          const stops = entries.map(([s, v]) => {
+            const from = (acc / total) * 100; acc += v.time;
+            const to = (acc / total) * 100;
+            const c = hexToRgba(sportColor(s), 0.35 + 0.65 * lvl / 4);
+            return `${c} ${from.toFixed(1)}%, ${c} ${to.toFixed(1)}%`;
+          });
+          bg = `linear-gradient(90deg, ${stops.join(', ')})`;
+        } else if (isAll) {
+          bg = cell.km > 0 ? hexToRgba(sportColor(daySport(cell.day)), 0.35 + 0.65 * lvl / 4) : 'var(--bs-secondary-bg)';
+        } else {
+          bg = lvl > 0 ? greenColors[lvl - 1] : 'var(--bs-secondary-bg)';
+        }
+        const tipParts = info
+          ? Object.entries(info.sports).sort((a, b) => b[1].time - a[1].time)
+            .map(([s, v]) => `${sportIcon(s)} ${v.km.toFixed(1)} km · ${fmtDuration(v.time)}`)
+          : [];
+        const tip = tipParts.length
+          ? `${cell.day}: ${tipParts.join(' + ')}`
+          : `${cell.day}: no activity`;
+        grid[di].push(`<td class="cal-cell" data-day="${cell.day}" data-km="${cell.km}" style="width:${cellSize}px;height:${cellSize}px;background:${bg};border:1px solid var(--bs-border-color);border-radius:2px;" title="${tip}"></td>`);
       }
     });
-    const rows = grid.map(r => `<tr>${r.join('')}</tr>`).join('');
+    const rows = grid.map((r, di) => `<tr><td class="cal-day-letter">${DAY_LETTERS[di]}</td>${r.join('')}</tr>`).join('');
     return `
       <div class="d-flex align-items-start mb-2 cal-year-row" data-year="${yr.year}">
         <span class="small text-muted me-2" style="width:3rem;flex:none;">${yr.year}</span>
@@ -1433,6 +1522,7 @@ function renderCalendar(acts) {
     <style>
       .cal-table { border-collapse: separate; border-spacing: ${gap}px; table-layout: fixed; }
       .cal-table td { padding: 0; }
+      .cal-day-letter { width: 10px !important; font-size: 9px; color: var(--bs-secondary-color); text-align: left; vertical-align: middle; }
       .cal-cell:hover { outline: 2px solid #0d6efd; }
     </style>`;
 
@@ -1447,9 +1537,7 @@ function renderCalendar(acts) {
   });
   applyVisibility();
 
-  if (note) note.textContent = isAll
-    ? 'Hover a day for details. Colors per sport: 🚴 blue · 🏃 orange · 🥾 green.'
-    : 'Hover a day for details.';
+  if (note) note.textContent = 'Hover a day for details.';
 }
 
 // HR vs pace scatter (running only): aerobic cost of pace. Each run is a
@@ -1458,7 +1546,20 @@ function renderCalendar(acts) {
 let hrPaceChart = null;
 let gradeHrChart = null;
 let hrPaceRuns = null;
-const YEAR_COLORS = ['#0d6efd', '#fd7e14', '#198754', '#dc3545', '#6f42c1', '#20c997', '#adb5bd'];
+// Distinct color per year for up to 50+ years: golden-angle hue steps
+// maximize perceived separation, with lightness/saturation variation so
+// even wrap-around hues stay distinguishable.
+function yearColorAt(index) {
+  const hue = (index * 137.508) % 360;   // golden angle
+  const light = 38 + (index % 3) * 12;   // 38/50/62%
+  const sat = 68 + (index % 4) * 7;      // 68..89%
+  return `hsl(${hue.toFixed(1)}, ${sat}%, ${light}%)`;
+}
+function yearColors(years) {
+  const map = {};
+  years.forEach((y, i) => { map[y] = yearColorAt(i); });
+  return map;
+}
 
 // HR vs speed by road grade (cycling). Server-side buckets each ride's
 // records into rolling 500 m windows; each window's mean speed and HR
@@ -1646,10 +1747,11 @@ function renderHrPace(acts) {
     return (a.elapsed_time / 60) / a.distance;   // min/km incl. breaks
   };
   // Very slow "runs" (walk breaks, GPS pauses) skew the regression —
-  // anything slower than 12 min/km is not aerobic running data.
+  // anything slower than 12 min/km is not aerobic running data. Sub-2
+  // min/km is GPS glitch (faster than any human), dropped the same way.
   hrPaceRuns = acts
     .map(a => ({ a, pace: paceOf(a), hr: a.avg_hr, year: (a.start_time || '').slice(0, 4) }))
-    .filter(r => r.pace != null && r.hr != null && r.a.distance >= 3 && r.pace <= 12);
+    .filter(r => r.pace != null && r.hr != null && r.a.distance >= 3 && r.pace >= 2 && r.pace <= 12);
 
   if (hrPaceRuns.length < 5) {
     holder.innerHTML = '';
@@ -1657,8 +1759,7 @@ function renderHrPace(acts) {
   }
 
   const years = [...new Set(hrPaceRuns.map(r => r.year))].sort();
-  const yearColor = {};
-  years.forEach((y, i) => yearColor[y] = YEAR_COLORS[i % YEAR_COLORS.length]);
+  const yearColor = yearColors(years);
 
   holder.innerHTML = sectionCard('hr-pace', 'Heart rate vs pace — aerobic cost', `
         <div class="d-flex flex-wrap align-items-center gap-3 mb-2">
@@ -1776,7 +1877,7 @@ function renderHrPace(acts) {
     });
 
     const note = document.getElementById('stats-hr-pace-note');
-    const parts = [`${hrPaceRuns.length} runs (3 km+, ≤12 min/km incl. breaks)`];
+    const parts = [`${hrPaceRuns.length} runs (3 km+, 2–12 min/km incl. breaks)`];
     for (const y of activeYears) {
       const pts = hrPaceRuns.filter(r => r.year === y);
       if (pts.length < 5) continue;
@@ -1861,9 +1962,15 @@ function renderVo2() {
       </div>`;
   };
 
-  const chartBlock = hist.length ? `
+  const chartBlock = hist.length > 1 ? `
+    <div class="d-flex align-items-center gap-2 mb-1 flex-wrap">
+      <label for="vo2-range" class="small text-muted mb-0">Window: <span id="vo2-range-label">all</span></label>
+      <input type="range" id="vo2-range" min="1" max="${hist.length}" value="${hist.length}" step="1" class="form-range" style="width: 220px;">
+    </div>
     <div style="height: 280px; position: relative;"><canvas id="stats-vo2-chart"></canvas></div>
-    <p class="small text-muted mb-0 mt-2" id="stats-vo2-note"></p>` : '';
+    <p class="small text-muted mb-0 mt-2" id="stats-vo2-note"></p>` : (hist.length ? `
+    <div style="height: 280px; position: relative;"><canvas id="stats-vo2-chart"></canvas></div>
+    <p class="small text-muted mb-0 mt-2" id="stats-vo2-note"></p>` : '');
 
   const tilesRow = (showRunning && est.running) || (showCycling && est.cycling) ? `
         <div class="row g-2 mb-2">
@@ -1886,53 +1993,68 @@ function renderVo2() {
   const sports = [...new Set(hist.map(h => h.sport || 'other'))];
   const sportColor = { running: '#fd7e14', cycling: '#0d6efd', hiking: '#198754' };
 
-  const labels = hist.map(h => h.date.slice(0, 10));
-  const datasets = sports.map(s => {
-    const pts = hist.filter(h => (h.sport || 'other') === s);
-    return {
-      label: s,
-      data: hist.map(h => (h.sport || 'other') === s ? h.vo2 : null),
-      backgroundColor: sportColor[s] || '#6f42c1',
-      borderColor: sportColor[s] || '#6f42c1',
-      pointRadius: 3,
-      borderWidth: 2,
-      tension: 0.25,
-      spanGaps: false,
-    };
-  });
+  const draw = (windowSize) => {
+    // Sliding window: the last `windowSize` points (slider), default all.
+    const view = windowSize >= hist.length ? hist : hist.slice(-windowSize);
+    const labels = view.map(h => h.date.slice(0, 10));
+    const datasets = sports.map(s => {
+      return {
+        label: s,
+        data: view.map(h => (h.sport || 'other') === s ? h.vo2 : null),
+        backgroundColor: sportColor[s] || '#6f42c1',
+        borderColor: sportColor[s] || '#6f42c1',
+        pointRadius: 3,
+        borderWidth: 2,
+        tension: 0.25,
+        spanGaps: false,
+      };
+    });
 
-  if (vo2Chart) vo2Chart.destroy();
-  vo2Chart = new window.Chart(document.getElementById('stats-vo2-chart').getContext('2d'), {
-    type: 'line',
-    data: { labels, datasets },
-    options: {
-      responsive: true, maintainAspectRatio: false,
-      interaction: { mode: 'nearest', intersect: false },
-      plugins: {
-        legend: { display: sports.length > 1, labels: { boxWidth: 12 } },
-        tooltip: {
-          callbacks: {
-            label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(1)} ml/kg/min`,
+    if (vo2Chart) vo2Chart.destroy();
+    vo2Chart = new window.Chart(document.getElementById('stats-vo2-chart').getContext('2d'), {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true, maintainAspectRatio: false,
+        interaction: { mode: 'nearest', intersect: false },
+        plugins: {
+          legend: { display: sports.length > 1, labels: { boxWidth: 12 } },
+          tooltip: {
+            callbacks: {
+              label: c => `${c.dataset.label}: ${c.parsed.y.toFixed(1)} ml/kg/min`,
+            },
           },
         },
-      },
-      scales: {
-        x: { ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 12 } },
-        y: {
-          title: { display: true, text: 'VO₂ max (ml/kg/min)' },
-          beginAtZero: false,
-          suggestedMin: Math.min(...hist.map(h => h.vo2)) - 2,
-          suggestedMax: Math.max(...hist.map(h => h.vo2)) + 2,
+        scales: {
+          x: { ticks: { maxRotation: 45, autoSkip: true, maxTicksLimit: 12 } },
+          y: {
+            title: { display: true, text: 'VO₂ max (ml/kg/min)' },
+            beginAtZero: false,
+            suggestedMin: Math.min(...view.map(h => h.vo2)) - 2,
+            suggestedMax: Math.max(...view.map(h => h.vo2)) + 2,
+          },
         },
-      },
-    }
-  });
+      }
+    });
 
-  const firstEst = hist[0], lastEst = hist[hist.length - 1];
-  const diff = lastEst.vo2 - firstEst.vo2;
-  const best = Math.max(...hist.map(h => h.vo2));
-  const note = document.getElementById('stats-vo2-note');
-  note.textContent = `Garmin estimates: ${hist.length} points · current ${lastEst.vo2.toFixed(1)} · best ${best.toFixed(1)} · ${diff >= 0 ? '+' : ''}${diff.toFixed(1)} since ${firstEst.date.slice(0, 10)}`;
+    const firstEst = view[0], lastEst = view[view.length - 1];
+    const diff = lastEst.vo2 - firstEst.vo2;
+    const best = Math.max(...view.map(h => h.vo2));
+    const note = document.getElementById('stats-vo2-note');
+    note.textContent = `Garmin estimates: ${view.length} points · current ${lastEst.vo2.toFixed(1)} · best ${best.toFixed(1)} · ${diff >= 0 ? '+' : ''}${diff.toFixed(1)} since ${firstEst.date.slice(0, 10)}`;
+    const rangeLabel = document.getElementById('vo2-range-label');
+    if (rangeLabel) {
+      rangeLabel.textContent = windowSize >= hist.length
+        ? `all ${hist.length} points`
+        : `last ${windowSize} points`;
+    }
+  };
+
+  const slider = document.getElementById('vo2-range');
+  if (slider) {
+    slider.addEventListener('input', () => draw(parseInt(slider.value, 10) || hist.length));
+  }
+  draw(hist.length);
 }
 
 
@@ -1955,15 +2077,13 @@ function renderYoY(acts) {
 
   // Stable per-year colors: keyed by the year's position in the full
   // list, so adding/removing years never recolors existing bars.
-  const COLORS = ['#adb5bd', '#0d6efd', '#fd7e14', '#198754', '#6f42c1', '#dc3545', '#20c997'];
-  const yearColor = {};
-  years.forEach((y, i) => { yearColor[y] = COLORS[i % COLORS.length]; });
+  const yearColor = yearColors(years);
 
   holder.innerHTML = sectionCard('yoy', 'Year over year — distance', `
           ${years.map(y => `
             <div class="form-check form-check-inline mb-0">
               <input class="form-check-input yoy-year" type="checkbox" data-year="${y}" id="yoy-year-${y}" ${yoySelected.has(y) ? 'checked' : ''}>
-              <label class="form-check-label small" for="yoy-year-${y}">${y}</label>
+              <label class="form-check-label small" for="yoy-year-${y}"><span style="color:${yearColor[y]};">■</span> ${y}</label>
             </div>`).join('')}
         </div>
         <div style="height: 280px; position: relative;"><canvas id="stats-yoy-chart"></canvas></div>`);
@@ -2026,8 +2146,17 @@ let loadChart = null;
 function renderTrainingSections() {
   const holder = document.getElementById('stats-training');
   if (!holder) return;
-  const acts = statsData.activities;
-  if (!acts || !acts.length) { holder.innerHTML = ''; return; }
+  const allActs = statsData.activities;
+  if (!allActs || !allActs.length) { holder.innerHTML = ''; return; }
+
+  // The stats payload carries the full history (year-over-year, records
+  // need it); the training sections are period views — streaks, fitness,
+  // load, normHR and goals all follow the selected period.
+  const now = monthKey(allActs[allActs.length - 1].start_time);
+  const first = monthKey(allActs[0].start_time);
+  const range = periodRange(now, first);
+  const acts = allActs.filter(a => inMonth(a.start_time, range));
+  if (!acts.length) { holder.innerHTML = ''; return; }
 
   const norm = statsData.hr_normalization;
   const withNorm = (norm && norm.predictors && norm.predictors.length)

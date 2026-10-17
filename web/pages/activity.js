@@ -114,7 +114,7 @@ export async function renderActivity(activityId) {
   const riderKg = await loadRiderWeightKg();
   const sport = details.activity?.sport || 'cycling';
 
-  renderHeader(details, activityId, sport);
+  renderHeader(details, activityId, sport, records);
   setupDeleteActivity(activityId, details.activity);
   // Laps + graphs read speed as pace for foot sports.
   const isPace = usesPace(sport);
@@ -125,11 +125,16 @@ export async function renderActivity(activityId) {
     // Climb detection is cycling-only; hide the section for other sports.
     climbsCard.classList.add('d-none');
   }
+  const elevationCard = document.getElementById('section-elevation')?.closest('.card');
+  if (elevationCard && !sportHasClimbs(sport)) {
+    // Elevation profile is climb analysis; noise for foot sports.
+    elevationCard.classList.add('d-none');
+  }
   renderClimbsTable(activityId, details.climbs || [], records, riderKg);
   setupJournal(activityId);
   renderLapsTable(details.laps || [], isPace);
   renderMap(records, details.climbs || []);
-  renderElevationChart(records, details.climbs || []);
+  if (sportHasClimbs(sport)) renderElevationChart(records, details.climbs || []);
   renderGraphsChartDeferred(records, details.sensors || {}, sport);
   attachFullscreen(document.getElementById('section-map')?.closest('.card'), document.getElementById('map'), {
     onResize: () => { if (map) { map.invalidateSize(); } }
@@ -140,7 +145,7 @@ export async function renderActivity(activityId) {
   setupIdentifySegments(activityId);
 }
 
-function renderHeader(details, activityId, sport = 'cycling') {
+function renderHeader(details, activityId, sport = 'cycling', records = []) {
   const act = details.activity;
   const meta = sportMeta(sport);
   const speedLabel = meta.pace ? 'pace' : 'speed';
@@ -150,6 +155,33 @@ function renderHeader(details, activityId, sport = 'cycling') {
       .filter(Boolean).join(' · ') || d.serial;
     return `<span class="badge bg-light text-dark border me-1">${label}</span>`;
   }).join('');
+
+  // Tile set: core tiles always; sensor-dependent tiles only when the
+  // activity actually carries the data (no "3127 m" temperature sentinel,
+  // no "-" placeholders). Cadence reads ×2 for foot sports (one-foot
+  // records in GarminDB, Garmin Connect shows steps/min).
+  const tile = (value, label) =>
+    `<div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div></div>`;
+  const tiles = [
+    tile(fmtDistance(act.distance), 'Distance'),
+    tile(fmtDuration(act.moving_time), 'Moving time'),
+    act.elapsed_time != null ? tile(fmtDuration(act.elapsed_time), 'Elapsed time') : '',
+    act.ascent != null ? tile(fmtElevation(act.ascent), 'Ascent') : '',
+    act.descent != null ? tile(fmtElevation(act.descent), 'Descent') : '',
+    act.avg_speed != null ? tile(fmtSpeedOrPace(sport, act.avg_speed), `Avg ${speedLabel}`) : '',
+    act.max_speed != null ? tile(fmtSpeedOrPace(sport, act.max_speed), `Max ${speedLabel}`) : '',
+    details.avg_hr != null ? tile(fmtHr(details.avg_hr), 'Avg HR') : '',
+    details.max_hr != null ? tile(fmtHr(details.max_hr), 'Max HR') : '',
+    act.calories ? tile(Math.round(act.calories).toLocaleString(), 'Calories') : '',
+    act.avg_cadence != null ? tile(Math.round(usesPace(sport) ? act.avg_cadence * 2 : act.avg_cadence) + (usesPace(sport) ? ' spm' : ' rpm'), 'Avg cadence') : '',
+  ];
+  // Average temperature from records (the activities table's column is
+  // mostly the 127 sentinel).
+  const temps = records.map(r => r.temperature).filter(t => t != null && t > -50 && t < 60);
+  if (temps.length) {
+    const avgT = temps.reduce((s, v) => s + v, 0) / temps.length;
+    tiles.push(tile(`${avgT.toFixed(0)}°C`, 'Avg temperature'));
+  }
 
   header.innerHTML = `
     <div class="d-flex justify-content-between align-items-start">
@@ -164,14 +196,7 @@ function renderHeader(details, activityId, sport = 'cycling') {
       </div>
     </div>
     <div class="row g-2">
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtDistance(act.distance)}</div><div class="stat-label">Distance</div></div></div>
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtDuration(act.moving_time)}</div><div class="stat-label">Moving time</div></div></div>
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtElevation(act.ascent)}</div><div class="stat-label">Ascent</div></div></div>
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtElevation(act.descent)}</div><div class="stat-label">Descent</div></div></div>
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtSpeedOrPace(sport, act.avg_speed)}</div><div class="stat-label">Avg ${speedLabel}</div></div></div>
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtSpeedOrPace(sport, act.max_speed)}</div><div class="stat-label">Max ${speedLabel}</div></div></div>
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtHr(details.avg_hr)}</div><div class="stat-label">Avg HR</div></div></div>
-      <div class="col-6 col-md-3"><div class="card text-center p-2"><div class="stat-value">${fmtHr(details.max_hr)}</div><div class="stat-label">Max HR</div></div></div>
+      ${tiles.join('')}
     </div>
   `;
 }
@@ -306,7 +331,7 @@ function renderClimbsTable(activityId, climbs, records, riderKg) {
         <a href="#climb/${key}" class="climb-name-link text-decoration-none text-body-secondary">Unnamed segment</a>
         <button class="btn btn-sm btn-link py-0 climb-edit-btn" title="Edit name">✎</button>
         <button class="btn btn-sm btn-link py-0 climb-modify-btn" title="Modify segment on map">🗺</button>
-        <button class="btn btn-sm btn-link py-0 climb-analysis-btn" title="Per-bin analysis">📊</button>
+        <button class="btn btn-sm btn-link py-0 climb-analysis-btn" title="Detailed analysis">📊</button>
         <button class="btn btn-sm btn-link py-0 climb-replace-btn" title="Replace with another segment">🔁</button>
         <button class="btn btn-sm btn-link py-0 climb-validate-btn text-success" title="Validate as canonical named climb">✓</button>
       </td>
@@ -1002,6 +1027,11 @@ function renderGraphsChartDeferred(records, sensors, sport = 'cycling') {
   // Garmin Connect shows steps/min = 2 x; speed reads as pace (min/km).
   const measures = { ...GRAPH_MEASURES };
   if (usesPace(sport)) {
+    // Pace plausibility clamp: GPS speed near 0 (indoor glitches,
+    // pause wobble) would turn into absurd min/km values and squash
+    // the whole chart. Running keeps anything up to 15 min/km,
+    // hiking up to 60 min/km — the rest is not locomotion data.
+    const paceMaxMinPerKm = sport === 'hiking' ? 60 : 15;
     measures.cadence = {
       ...measures.cadence,
       label: 'Step rate',
@@ -1013,7 +1043,11 @@ function renderGraphsChartDeferred(records, sensors, sport = 'cycling') {
       label: 'Pace',
       axisTitle: 'Pace (min/km)',
       // Speed (km/h) -> pace (s/km); inverted axis so up = faster.
-      transform: v => (v && v > 0) ? 3600 / v : null,
+      transform: v => {
+        if (!v || v <= 0) return null;
+        const pace = 3600 / v;
+        return pace <= paceMaxMinPerKm * 60 ? pace : null;
+      },
       invert: true,
       tickFormat: paceTick,
     };

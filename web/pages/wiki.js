@@ -221,7 +221,7 @@ function cyclingWiki() {
       <div class="card-body">
         <p>Each climb page groups every recorded attempt on that climb, <strong>newest first</strong> like the activity feed, with time, gap to your PR, VAM, estimated W/kg, average HR and speed.</p>
         <ul>
-          <li><strong>Per-bin analysis</strong> — the climb cut into fixed bins (200 m / 500 m / 1000 m): one dot per bin for the chosen metric (speed, HR, VAM, power, cadence, est. W/kg), with grey dots for other attempts and optional per-bin average/best across all attempts. Compare how you rode each section, attempt after attempt.</li>
+          <li><strong>Detailed analysis</strong> — the climb cut into fixed bins (200 m / 500 m / 1000 m): one dot per bin for the chosen metric (speed, HR, VAM, power, cadence, est. W/kg), with grey dots for other attempts and optional per-bin average/best across all attempts. Compare how you rode each section, attempt after attempt.</li>
           <li><strong>Performance chart</strong> — any metric over time with an optional regression line; gold/silver/bronze dots mark your three best values.</li>
         </ul>
 
