@@ -590,8 +590,10 @@ function renderSegmentElevation(segment, startDistanceM) {
         data: points,
         borderWidth: 3,
         pointRadius: 0,
-        fill: false,
-        backgroundColor: 'transparent',
+        fill: {
+          target: 'origin',
+        },
+        backgroundColor: 'rgba(13, 110, 253, 0.10)',
         tension: 0,
         segment: {
           borderColor: ctx => {

@@ -23,10 +23,10 @@ export async function renderActivity(activityId) {
       <div id="activity-header" class="mb-3"></div>
 
       <div class="card mb-3 activity-section" id="journal-card">
-        <button class="card-header btn btn-link text-decoration-none w-100 text-start fw-semibold" data-bs-toggle="collapse" data-bs-target="#section-journal" aria-expanded="true">
+        <button class="card-header btn btn-link text-decoration-none w-100 text-start fw-semibold collapsed" data-bs-toggle="collapse" data-bs-target="#section-journal" id="journal-toggle" aria-expanded="false">
           <span class="chevron me-2"></span>Journal
         </button>
-        <div class="collapse show" id="section-journal">
+        <div class="collapse" id="section-journal">
           <div class="card-body">
             <textarea id="journal-note" class="form-control" rows="3" placeholder="How was this activity?"></textarea>
             <button id="journal-save-btn" class="btn btn-sm btn-outline-primary mt-2">Save note</button>
@@ -45,6 +45,17 @@ export async function renderActivity(activityId) {
         <div class="card-header fw-semibold">Map</div>
         <div class="collapse show" id="section-map">
           <div class="card-body p-2"><div id="map"></div></div>
+        </div>
+      </div>
+
+      <div class="card mb-3 activity-section" id="hr-zones-card" style="display:none;">
+        <button class="card-header btn btn-link text-decoration-none w-100 text-start fw-semibold collapsed" data-bs-toggle="collapse" data-bs-target="#section-hr-zones" aria-expanded="false">
+          <span class="chevron me-2"></span>Heart rate zones
+        </button>
+        <div class="collapse" id="section-hr-zones">
+          <div class="card-body">
+            <div id="hr-zones-body"></div>
+          </div>
         </div>
       </div>
 
@@ -115,6 +126,7 @@ export async function renderActivity(activityId) {
   const sport = details.activity?.sport || 'cycling';
 
   renderHeader(details, activityId, sport, records);
+  renderHrZones(details.activity || {}, sport);
   setupDeleteActivity(activityId, details.activity);
   // Laps + graphs read speed as pace for foot sports.
   const isPace = usesPace(sport);
@@ -133,7 +145,7 @@ export async function renderActivity(activityId) {
   renderClimbsTable(activityId, details.climbs || [], records, riderKg);
   setupJournal(activityId);
   renderLapsTable(details.laps || [], isPace);
-  renderMap(records, details.climbs || []);
+  renderMap(records, details.climbs || [], sport);
   if (sportHasClimbs(sport)) renderElevationChart(records, details.climbs || []);
   renderGraphsChartDeferred(records, details.sensors || {}, sport);
   attachFullscreen(document.getElementById('section-map')?.closest('.card'), document.getElementById('map'), {
@@ -201,6 +213,54 @@ function renderHeader(details, activityId, sport = 'cycling', records = []) {
   `;
 }
 
+// HR zone distribution: time in each of the 5 device zones (Garmin
+// method: % of max HR). Rows show the zone's bpm range, time and share;
+// a horizontal stacked bar gives the at-a-glance split.
+const HR_ZONE_COLORS = ['#adb5bd', '#0d6efd', '#20c997', '#ffc107', '#dc3545'];
+function renderHrZones(act, sport) {
+  const card = document.getElementById('hr-zones-card');
+  const body = document.getElementById('hr-zones-body');
+  if (!card || !body) return;
+  const zoneTimes = [act.hrz_1_time, act.hrz_2_time, act.hrz_3_time, act.hrz_4_time, act.hrz_5_time]
+    .map(v => (typeof v === 'number' ? v : null));
+  if (!zoneTimes.some(v => v != null && v > 0)) return;   // no zone data
+  const bounds = [act.hrz_1_hr, act.hrz_2_hr, act.hrz_3_hr, act.hrz_4_hr, act.hrz_5_hr];
+  const total = zoneTimes.reduce((s, v) => s + (v || 0), 0) || 1;
+
+  const rows = zoneTimes.map((t, i) => {
+    // hrz_N_hr is zone N's upper bound; zone N's floor is zone N-1's
+    // upper bound (zone 1 starts at 0).
+    const upper = bounds[i] != null ? bounds[i] : null;
+    const lower = i > 0 ? bounds[i - 1] : null;
+    let range = `Zone ${i + 1}`;
+    if (i === 0 && upper != null) range = `< ${Math.round(upper)}`;
+    else if (upper != null && lower != null) range = `${Math.round(lower)}–${Math.round(upper)}`;
+    else if (upper == null && lower != null) range = `${Math.round(lower)}+`;
+    const pct = ((t || 0) / total) * 100;
+    return { t: t || 0, range, pct };
+  });
+
+  body.innerHTML = `
+    <div class="d-flex mb-2" style="height: 14px; border-radius: 4px; overflow: hidden;">
+      ${rows.map((r, i) => r.t > 0 ? `<div title="Zone ${i + 1}: ${fmtDuration(r.t)}" style="flex:${r.t};background:${HR_ZONE_COLORS[i]};"></div>` : '').join('')}
+    </div>
+    <div class="table-responsive">
+      <table class="table table-sm mb-0">
+        <thead><tr><th>Zone</th><th>HR range (bpm)</th><th>Time</th><th class="text-end">Share</th></tr></thead>
+        <tbody>
+          ${rows.map((r, i) => `
+            <tr>
+              <td><span style="color:${HR_ZONE_COLORS[i]};">■</span> Zone ${i + 1}</td>
+              <td>${r.range}</td>
+              <td>${fmtDuration(r.t)}</td>
+              <td class="text-end">${r.pct.toFixed(0)}%</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>`;
+  card.style.display = '';
+}
+
 function setupDeleteActivity(activityId, act) {
   const btn = document.getElementById('delete-activity-btn');
   if (!btn) return;
@@ -239,6 +299,18 @@ async function setupJournal(activityId) {
     return;
   }
   noteEl.value = entry.note || '';
+
+  // Empty journal starts collapsed (nothing to read); with a note or
+  // photos it opens right away.
+  if (entry.note || (entry.photos || []).length) {
+    const collapseEl = document.getElementById('section-journal');
+    const toggle = document.getElementById('journal-toggle');
+    if (collapseEl) {
+      collapseEl.classList.add('show');
+      toggle?.classList.remove('collapsed');
+      toggle?.setAttribute('aria-expanded', 'true');
+    }
+  }
 
   const renderPhotos = photos => {
     photosEl.innerHTML = (photos || []).map(p => `
@@ -783,7 +855,7 @@ function renderLapsTable(laps, isPace = false) {
   }
 }
 
-function renderMap(records, climbs) {
+function renderMap(records, climbs, sport = 'cycling') {
   if (!map) {
     map = L.map('map');
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -797,21 +869,71 @@ function renderMap(records, climbs) {
     }
   });
 
-  const routePoints = records.filter(p => p.position_lat && p.position_long).map(p => [p.position_lat, p.position_long]);
+  const located = records.filter(p => p.position_lat && p.position_long);
+  const routePoints = located.map(p => [p.position_lat, p.position_long]);
   if (routePoints.length === 0) return;
 
-  L.polyline(routePoints, { color: '#6c757d', weight: 3, opacity: 0.7 }).addTo(map);
+  // Speed-coloured trace: the route is cut at every speed-bucket change
+  // (each segment starts with the previous point so segments connect),
+  // drawn over a black casing polyline so the trace reads clearly
+  // against any map background. Speed = current record speed when
+  // present, else derived from distance delta over time delta.
+  const speeds = new Array(located.length).fill(null);
+  for (let i = 0; i < located.length; i++) {
+    if (located[i].speed != null) { speeds[i] = located[i].speed; continue; }
+    if (i > 0 && located[i].timestamp && located[i - 1].timestamp) {
+      const dt = (new Date(located[i].timestamp) - new Date(located[i - 1].timestamp)) / 1000;
+      const dd = (located[i].distance - located[i - 1].distance) / 1000;
+      speeds[i] = (dt > 0 && dd >= 0) ? dd / dt * 3600 : null;
+    }
+  }
+  const validSpeeds = speeds.filter(v => v != null && isFinite(v));
+  // Relative buckets when speeds exist; otherwise fall back to a plain
+  // grey trace (some activities carry no speed at all).
+  let speedColor = null;
+  if (validSpeeds.length > 10) {
+    const sorted = [...validSpeeds].sort((a, b) => a - b);
+    const q = p => sorted[Math.min(sorted.length - 1, Math.floor(p * (sorted.length - 1)))];
+    const BUCKETS = [
+      { max: q(0.20), color: '#3182bd' },  // slow — deep blue
+      { max: q(0.40), color: '#9ecae1' },
+      { max: q(0.60), color: '#ffffbf' },  // average — pale yellow
+      { max: q(0.80), color: '#fdae61' },
+      { max: Infinity, color: '#d73027' }, // fast — red
+    ];
+    speedColor = v => BUCKETS.find(b => v <= b.max)?.color || '#d73027';
+  }
+
+  // Black casing under the whole route, then the coloured segments.
+  L.polyline(routePoints, { color: '#000000', weight: 7, opacity: 0.9 }).addTo(map);
+  if (speedColor) {
+    for (let i = 1; i < located.length; i++) {
+      const v0 = speeds[i - 1] ?? speeds[i];
+      const v1 = speeds[i] ?? speeds[i - 1];
+      const v = v0 ?? v1;
+      if (v == null) continue;
+      L.polyline([routePoints[i - 1], routePoints[i]], {
+        color: speedColor(v), weight: 4, opacity: 0.95,
+      }).addTo(map);
+    }
+  } else {
+    L.polyline(routePoints, { color: '#6c757d', weight: 4, opacity: 0.7 }).addTo(map);
+  }
   L.circleMarker(routePoints[0], { radius: 7, color: '#198754', fillColor: '#198754', fillOpacity: 1, weight: 2 }).addTo(map).bindPopup('Start');
   L.circleMarker(routePoints[routePoints.length - 1], { radius: 7, color: '#dc3545', fillColor: '#dc3545', fillOpacity: 1, weight: 2 }).addTo(map).bindPopup('Finish');
 
-  for (const c of climbs) {
-    const segment = records.filter(p =>
-      p.position_lat && p.position_long && p.distance >= c.start_distance_m && p.distance <= c.end_distance_m
-    ).map(p => [p.position_lat, p.position_long]);
-    if (segment.length > 1) {
-      L.polyline(segment, { color: '#dc3545', weight: 5, opacity: 0.9 }).addTo(map);
-    }
-  }
+  // Speed legend under the map.
+  const legend = L.control({ position: 'bottomright' });
+  legend.onAdd = () => {
+    const div = L.DomUtil.create('div', 'speed-legend');
+    const isPace = usesPace(sport);
+    div.innerHTML = speedColor
+      ? `<div class="d-flex align-items-center gap-1 small">${['slow', '', '', '', 'fast'].map((t, i) =>
+          `<span style="width:18px;height:8px;display:inline-block;background:${['#3182bd', '#9ecae1', '#ffffbf', '#fdae61', '#d73027'][i]};border:1px solid rgba(0,0,0,.3);"></span>`).join('')}${isPace ? ' pace' : ' speed'}</div>`
+      : '';
+    return div;
+  };
+  if (speedColor) legend.addTo(map);
 
   map.fitBounds(routePoints, { padding: [20, 20] });
 }
