@@ -41,6 +41,21 @@ export async function renderParameters() {
               <div class="form-text">Unticked sports stay in the database but are hidden from the sidebar, feed and statistics.</div>
             </div>
 
+            <div class="mb-3">
+              <label class="form-label">Offline basemaps (PMTiles)</label>
+              <div class="row g-2">
+                <div class="col-md-6">
+                  <label class="form-label small" for="cfg-basemap_light">Light theme</label>
+                  <input class="form-control form-control-sm text-muted" id="cfg-basemap_light" placeholder="e.g. cache/basemap-light.pmtiles">
+                </div>
+                <div class="col-md-6">
+                  <label class="form-label small" for="cfg-basemap_dark">Dark theme</label>
+                  <input class="form-control form-control-sm text-muted" id="cfg-basemap_dark" placeholder="e.g. cache/basemap-dark.pmtiles">
+                </div>
+              </div>
+              <div class="form-text">Maps load from these files first (instant, offline) and fall back to online tiles when a file is missing or a tile is out of range. Build extracts at <a href="https://protomaps.com/docs/build" target="_blank" rel="noopener">protomaps.com</a> or grab a country extract from <a href="https://data.source.coop/protomaps/openstreetmap/tiles/" target="_blank" rel="noopener">protomaps tiles</a>.</div>
+            </div>
+
             <a class="small text-decoration-none" data-bs-toggle="collapse" href="#advanced-paths" role="button">Advanced paths</a>
             <div class="collapse mt-2" id="advanced-paths">
               <p class="small text-muted mb-2">Set these only if your layout differs from the standard GarminDB structure.</p>
@@ -143,6 +158,8 @@ export async function renderParameters() {
         garmindb_cli: document.getElementById('cfg-garmindb_cli').value.trim(),
         sync_latest: document.getElementById('cfg-sync_latest').checked,
         sports: [...document.querySelectorAll('.cfg-sport:checked')].map(cb => cb.value),
+        basemap_light: document.getElementById('cfg-basemap_light').value.trim(),
+        basemap_dark: document.getElementById('cfg-basemap_dark').value.trim(),
       };
       for (const f of ['activities_db', 'garmin_db', 'fit_dir', 'personal_info_json']) {
         payload[f] = document.getElementById('cfg-' + f).value.trim();
@@ -384,6 +401,8 @@ function fillForm(status) {
   for (const cb of document.querySelectorAll('.cfg-sport')) {
     cb.checked = enabledSports.includes(cb.value);
   }
+  document.getElementById('cfg-basemap_light').value = values.basemap_light || '';
+  document.getElementById('cfg-basemap_dark').value = values.basemap_dark || '';
   for (const f of ['activities_db', 'garmin_db', 'fit_dir', 'personal_info_json']) {
     document.getElementById('cfg-' + f).value = values[f] || '';
   }

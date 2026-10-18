@@ -1,6 +1,7 @@
 import { fetchClimbs } from '../utils/api.js';
 import { fmtDate, fmtTime, fmtDuration, fmtDistance, fmtElevation, fmtSpeedOrPace, fmtHr } from '../utils/format.js';
 import { sportMeta, hasClimbs, SPORTS } from '../utils/sports.js';
+import { baseLayer } from '../utils/mapTiles.js';
 
 let allActivities = [];
 let sportFilter = 'all';
@@ -239,11 +240,12 @@ async function loadMiniMap(el) {
     boxZoom: false,
     keyboard: false
   });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-
   if (fallbackLat && fallbackLon) {
     map.setView([fallbackLat, fallbackLon], 12);
+  } else {
+    map.setView([20, 0], 2);
   }
+  baseLayer().then(l => l.addTo(map));
 
   try {
     const res = await fetch(`/api/activity/${id}/polyline`);

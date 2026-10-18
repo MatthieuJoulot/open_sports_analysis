@@ -1,5 +1,6 @@
 import { fetchClimbs, fetchAllClimbNames, fetchClimbGroups, fetchRegions, fetchHeatmap, saveSegment, deleteSegment } from '../utils/api.js';import { fmtDate, fmtDistance, fmtElevation, fmtGrade, fmtSpeed, climbKey } from '../utils/format.js';
 import { attachFullscreen } from '../utils/fullscreen.js';
+import { baseLayer } from '../utils/mapTiles.js';
 
 let allClimbs = [];
 let allNames = {};
@@ -242,12 +243,8 @@ function applyHeatBasemap() {
       attribution: '&copy; OpenTopoMap (CC-BY-SA)'
     }).addTo(heatMap);
   } else {
-    heatBaseLayer = L.tileLayer(dark
-      ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
-      : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19,
-      attribution: 'Tiles &copy; Esri, HERE, Garmin'
-    }).addTo(heatMap);
+    heatBaseLayer = null;
+    baseLayer('gray').then(l => { if (heatBaseLayer === null) { heatBaseLayer = l; l.addTo(heatMap); } });
     heatRefLayer = L.tileLayer(dark
       ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'
       : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
@@ -320,10 +317,7 @@ function renderClimbsMap() {
   const div = document.getElementById('climbs-map');
   if (!climbsMap) {
     climbsMap = L.map(div);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(climbsMap);
+    baseLayer().then(l => l.addTo(climbsMap));
     climbsMapLayer = L.layerGroup().addTo(climbsMap);
   }
   climbsMap.invalidateSize();

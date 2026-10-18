@@ -6,6 +6,7 @@ import { attachFullscreen } from '../utils/fullscreen.js';
 import { loadRiderWeightKg, estimateClimbWkg } from '../utils/estPower.js';
 import { fmtDate, fmtTime, fmtDuration, fmtDistance, fmtElevation, fmtGrade, fmtSpeed, fmtSpeedOrPace, fmtHr, climbKey } from '../utils/format.js';
 import { sportMeta, hasClimbs as sportHasClimbs, usesPace } from '../utils/sports.js';
+import { baseLayer } from '../utils/mapTiles.js';
 
 let elevationChart = null;
 let graphsChart = null;
@@ -17,6 +18,12 @@ let currentActivityId = null;
 
 export async function renderActivity(activityId) {
   currentActivityId = activityId;
+  // The view rebuild recreates the #map container, so any previous
+  // Leaflet instance is now attached to a detached node — drop it.
+  if (map) {
+    try { map.remove(); } catch (e) { /* already detached */ }
+    map = null;
+  }
   const app = document.getElementById('app');
   app.innerHTML = `
     <div id="activity-view">
@@ -858,9 +865,7 @@ function renderLapsTable(laps, isPace = false) {
 function renderMap(records, climbs, sport = 'cycling') {
   if (!map) {
     map = L.map('map');
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      attribution: '&copy; OpenStreetMap contributors'
-    }).addTo(map);
+    baseLayer().then(l => l.addTo(map));
   }
 
   map.eachLayer(layer => {

@@ -61,12 +61,20 @@ class Handler(SimpleHTTPRequestHandler):
     TILE_FETCH_SEM = threading.Semaphore(4)
 
     def do_GET(self):
+        import time as _t
+        import datetime; print(datetime.datetime.now().strftime('%H:%M:%S.%f')[:-3], 'GET', self.path, 'conn=', self.connection.fileno() if self.connection else None, flush=True)
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
 
         if path.startswith("/tiles/"):
             self._serve_tile(path)
+            return
+        if path == "/api/map-config":
+            self._send_json(json.dumps(get_map_config()))
+            return
+        if path.startswith("/api/basemap/"):
+            self._serve_basemap(path)
             return
         if path == "/api/sync/status":
             self._send_json(json.dumps(get_sync_status()))
@@ -592,6 +600,53 @@ class Handler(SimpleHTTPRequestHandler):
     # imagery + terrarium DEM tile servers. This proxy caches every tile
     # on disk so repeat renders are local-only: dramatically faster
     # headless renders and a much snappier live page.
+
+    def _serve_basemap(self, path):
+        """Serve the configured PMTiles basemap files with HTTP range
+        support (the pmtiles client reads chunks, never the whole file)."""
+        which = path.split("/")[-1]           # 'light' or 'dark'
+        f = _basemap_file(which)
+        if not f:
+            self.send_error(404, f"no {which} basemap configured")
+            return
+        size = f.stat().st_size
+        rng = self.headers.get("Range")
+        if rng:
+            m = re.match(r"bytes=(\d+)-(\d*)", rng)
+            if not m:
+                self.send_error(416, "bad range")
+                return
+            start = int(m.group(1))
+            end = int(m.group(2)) if m.group(2) else size - 1
+            if start >= size:
+                self.send_error(416, "range out of bounds")
+                return
+            end = min(end, size - 1)
+            length = end - start + 1
+            self.send_response(206)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
+        else:
+            length = size
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(length))
+        self.send_header("Accept-Ranges", "bytes")
+        self.send_header("Cache-Control", "max-age=86400")
+        self.end_headers()
+        with open(f, "rb") as fh:
+            if rng:
+                fh.seek(int(re.match(r"bytes=(\d+)-", rng).group(1)))
+            remaining = length
+            while remaining > 0:
+                chunk = fh.read(min(65536, remaining))
+                if not chunk:
+                    break
+                try:
+                    self.wfile.write(chunk)
+                except (BrokenPipeError, ConnectionResetError):
+                    break
+                remaining -= len(chunk)
 
     def _serve_tile(self, path):
         # /tiles/<source>/<z>/<a>/<b> where a/b order differs by source:
@@ -1972,6 +2027,28 @@ def import_files(payload):
     except Exception as exc:
         results["groups_warning"] = str(exc)
     return {"imported": results}
+
+
+def _basemap_file(which):
+    """Configured PMTiles basemap file for 'light'/'dark', or None."""
+    key = f"basemap_{which}"
+    raw = config.current_config().get(key) or ""
+    if not raw:
+        return None
+    p = Path(raw).expanduser()
+    if not p.is_absolute():
+        p = (APP_ROOT / p).resolve()
+    return p if p.is_file() else None
+
+
+def get_map_config():
+    """Tells the frontend whether local PMTiles basemaps are available."""
+    return {
+        "local": {
+            "light": bool(_basemap_file("light")),
+            "dark": bool(_basemap_file("dark")),
+        },
+    }
 
 
 def get_config_status():

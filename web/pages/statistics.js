@@ -1,5 +1,6 @@
 import { fetchStats, fetchProfile, fetchHeatmap } from '../utils/api.js';
 import { attachFullscreen } from '../utils/fullscreen.js';
+import { baseLayer } from '../utils/mapTiles.js';
 import { fmtDate, fmtDuration, fmtDistance, fmtElevation, fmtHr, fmtSpeed, fmtPace, climbKey } from '../utils/format.js';
 import { sportMeta, SPORTS } from '../utils/sports.js';
 
@@ -1297,11 +1298,7 @@ async function renderGpsHeatmap() {
 
     const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
     const map = L.map(div, { attributionControl: false });
-    L.tileLayer(dark
-      ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}'
-      : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}', {
-      maxZoom: 19,
-    }).addTo(map);
+    baseLayer('gray').then(l => l.addTo(map));
     const group = L.layerGroup();
     const renderer = L.canvas({ padding: 0.2 });
     let i = 0;

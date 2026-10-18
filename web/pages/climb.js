@@ -3,6 +3,7 @@ import { openSegmentEditor } from '../components/segmentEditor.js?v=2';
 import { attachFullscreen } from '../utils/fullscreen.js';
 import { renderSegmentAnalysis } from '../components/segmentAnalysis.js';
 import { fmtDate, fmtDuration, fmtDistance, fmtElevation, fmtGrade, fmtSpeed, fmtHr, climbKey, pyRound } from '../utils/format.js';
+import { baseLayer } from '../utils/mapTiles.js';
 
 let currentSegment = [];
 let currentStartDistanceM = 0;
@@ -334,9 +335,7 @@ function renderSegmentMap(container, segment) {
 
   const map = L.map(container);
   container._climbMap = map;
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+  baseLayer().then(l => l.addTo(map));
   L.polyline(points, { color: '#dc3545', weight: 5, opacity: 0.9 }).addTo(map);
   L.circleMarker(points[0], { radius: 7, color: '#ffffff', fillColor: '#198754', fillOpacity: 1, weight: 2 }).addTo(map).bindPopup('Start');
   L.circleMarker(points[points.length - 1], { radius: 7, color: '#ffffff', fillColor: '#dc3545', fillOpacity: 1, weight: 2 }).addTo(map).bindPopup('Finish');

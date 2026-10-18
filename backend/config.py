@@ -24,6 +24,8 @@ DEFAULTS = {
     "port": 8080,
     "sync_latest": True,
     "sports": ["cycling", "running", "hiking", "rowing"],
+    "basemap_light": "",
+    "basemap_dark": "",
 }
 
 # Preferred env var prefix is OPEN_SPORTS_ANALYSIS_*; the legacy

@@ -1,4 +1,5 @@
 import { saveSegment } from '../utils/api.js';
+import { baseLayer } from '../utils/mapTiles.js';
 
 export function openSegmentEditor({ activityId, records, startDistanceM, endDistanceM, onSave }) {
   return new Promise((resolve) => {
@@ -85,9 +86,7 @@ export function openSegmentEditor({ activityId, records, startDistanceM, endDist
 function initMap({ activityId, records, startDistanceM, endDistanceM, onSave }) {
   const mapContainer = document.getElementById('segment-editor-map');
   const map = L.map(mapContainer);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '&copy; OpenStreetMap contributors'
-  }).addTo(map);
+  baseLayer().then(l => l.addTo(map));
 
   const route = records.filter(r => r.position_lat != null && r.position_long != null);
   const points = route.map(r => [r.position_lat, r.position_long]);
