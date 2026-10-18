@@ -1,7 +1,7 @@
 import { fetchStats, fetchProfile, fetchHeatmap } from '../utils/api.js';
 import { attachFullscreen } from '../utils/fullscreen.js';
 import { fmtDate, fmtDuration, fmtDistance, fmtElevation, fmtHr, fmtSpeed, fmtPace, climbKey } from '../utils/format.js';
-import { sportMeta } from '../utils/sports.js';
+import { sportMeta, SPORTS } from '../utils/sports.js';
 
 let statsData = null;
 let period = 'year';   // 'year' | '12m' | 'all' | 'custom'
@@ -174,7 +174,7 @@ export async function renderStatistics(scope) {
           </div>
         </div>
         <div class="d-flex gap-2 flex-wrap mb-3" id="stats-sport-chips">
-          ${['all', 'cycling', 'running', 'hiking'].map(s => {
+          ${['all', ...Object.keys(SPORTS)].map(s => {
             const meta = s === 'all' ? { icon: '🌐', label: 'All' } : sportMeta(s);
             const on = sport === null ? s === 'all' : s === sport;
             return `<button class="btn btn-sm ${on ? 'btn-primary' : 'btn-outline-secondary'} sport-chip" data-sport="${s}">${meta.icon} ${meta.label}</button>`;
@@ -1277,7 +1277,7 @@ async function renderGpsHeatmap() {
   const holder = document.getElementById('stats-gps-heat');
   if (!holder) return;
   const sports = sport === null
-    ? ['cycling', 'running', 'hiking'].filter(s => statsData.activities.some(a => a.sport === s))
+    ? Object.keys(SPORTS).filter(s => statsData.activities.some(a => a.sport === s))
     : [sport];
   if (!sports.length) { holder.innerHTML = ''; return; }
   const key = sports.join('+');
@@ -1421,9 +1421,9 @@ function renderCalendar(acts) {
   const days = Object.keys(byDay).sort();
   if (!days.length) { el.innerHTML = '<p class="text-muted mb-0">No activities.</p>'; return; }
 
-  const SPORT_COLORS = { cycling: '#0d6efd', running: '#fd7e14', hiking: '#198754' };
+  const SPORT_COLORS = { cycling: '#0d6efd', running: '#fd7e14', hiking: '#198754', rowing: '#6f42c1' };
   const sportColor = s => SPORT_COLORS[s] || '#adb5bd';
-  const sportIcon = s => s === 'cycling' ? '🚴' : s === 'running' ? '🏃' : s === 'hiking' ? '🥾' : '🏅';
+  const sportIcon = s => SPORTS[s]?.icon || '🏅';
   // Dominant sport by TIME, not distance: a long hike with a short bike
   // commute reads as a hiking day, whatever the kilometres say.
   const daySport = day => Object.entries(byDay[day].sports).sort((a, b) => b[1].time - a[1].time)[0]?.[0];
@@ -2089,9 +2089,9 @@ function renderYoY(acts) {
   // list, so adding/removing years never recolors existing bars.
   const yearColor = yearColors(years);
   const isAll = sport === null;
-  const SPORT_COLORS = { cycling: '#0d6efd', running: '#fd7e14', hiking: '#198754' };
+  const SPORT_COLORS = { cycling: '#0d6efd', running: '#fd7e14', hiking: '#198754', rowing: '#6f42c1' };
   const sportColor = s => SPORT_COLORS[s] || '#adb5bd';
-  const sportIcon = s => s === 'cycling' ? '🚴' : s === 'running' ? '🏃' : s === 'hiking' ? '🥾' : '🏅';
+  const sportIcon = s => SPORTS[s]?.icon || '🏅';
   const sportsPresent = [...new Set(acts.map(a => a.sport || 'cycling'))].sort();
 
   // perYearSport[y][month][sport] = km, for the tooltip breakdown.

@@ -1,4 +1,5 @@
-import { fetchProfile, startFetch, startAnalyze, fetchSyncStatus } from '../utils/api.js';
+import { fetchProfile, startFetch, startAnalyze, fetchSyncStatus, fetchConfig } from '../utils/api.js';
+import { SPORTS } from '../utils/sports.js';
 
 let profileData = null;
 
@@ -13,6 +14,18 @@ export async function renderSidebar(activeSection = 'feed') {
       profileData = { athlete: {}, all_time: {} };
     }
   }
+
+  // Which sports get a sidebar section: the enabled list from config
+  // (cycling first regardless, it owns the climb sections).
+  let enabledSports;
+  try {
+    const cfg = await fetchConfig();
+    enabledSports = (cfg.values?.sports || []).filter(s => SPORTS[s]);
+  } catch (e) {
+    enabledSports = Object.keys(SPORTS);
+  }
+  if (!enabledSports.length) enabledSports = Object.keys(SPORTS);
+  const sportSections = ['cycling', ...enabledSports.filter(s => s !== 'cycling')];
 
   const athlete = profileData.athlete || {};
 
@@ -61,49 +74,33 @@ export async function renderSidebar(activeSection = 'feed') {
           </div>
         </div>
 
-        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ${(activeSection.startsWith('cycling') || ['climbs', 'explore', 'wiki-cycling'].includes(activeSection)) ? 'active' : ''}"
-           data-bs-toggle="collapse" href="#nav-cycling" role="button"
-           aria-expanded="${(activeSection.startsWith('cycling') || ['climbs', 'explore', 'wiki-cycling'].includes(activeSection)) ? 'true' : 'false'}" aria-controls="nav-cycling">
-          🚴 Cycling
+        ${sportSections.map(s => {
+          const meta = SPORTS[s];
+          const active = activeSection.startsWith(s) || activeSection === `wiki-${s}` || (s === 'cycling' && ['climbs', 'explore'].includes(activeSection));
+          const expanded = active ? 'show' : '';
+          const aria = active ? 'true' : 'false';
+          const links = [
+            `<a href="#feed/${s}" class="d-block py-1 text-decoration-none ${activeSection === `${s}-feed` ? 'fw-semibold' : ''}">Activity feed</a>`,
+            ...(s === 'cycling' ? [
+              `<a href="#climbs" class="d-block py-1 text-decoration-none ${activeSection === 'climbs' ? 'fw-semibold' : ''}">Climbs</a>`,
+              `<a href="#explore" class="d-block py-1 text-decoration-none ${activeSection === 'explore' ? 'fw-semibold' : ''}">Explore climbs</a>`,
+            ] : []),
+            `<a href="#statistics/${s}" class="d-block py-1 text-decoration-none ${activeSection === `${s}-statistics` ? 'fw-semibold' : ''}">Statistics</a>`,
+            `<a href="#wiki/${s}" class="d-block py-1 text-decoration-none ${activeSection === `wiki-${s}` ? 'fw-semibold' : ''}">Wiki</a>`,
+          ].join('');
+          return `
+        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ${active ? 'active' : ''}"
+           data-bs-toggle="collapse" href="#nav-${s}" role="button"
+           aria-expanded="${aria}" aria-controls="nav-${s}">
+          ${meta.icon} ${meta.label}
           <span class="chevron">›</span>
         </a>
-        <div class="collapse ${(activeSection.startsWith('cycling') || ['climbs', 'explore', 'wiki-cycling'].includes(activeSection)) ? 'show' : ''}" id="nav-cycling">
+        <div class="collapse ${expanded}" id="nav-${s}">
           <div class="list-group-item border-0 px-4 py-1">
-            <a href="#feed/cycling" class="d-block py-1 text-decoration-none ${activeSection === 'cycling-feed' ? 'fw-semibold' : ''}">Activity feed</a>
-            <a href="#climbs" class="d-block py-1 text-decoration-none ${activeSection === 'climbs' ? 'fw-semibold' : ''}">Climbs</a>
-            <a href="#statistics/cycling" class="d-block py-1 text-decoration-none ${activeSection === 'cycling-statistics' ? 'fw-semibold' : ''}">Statistics</a>
-            <a href="#explore" class="d-block py-1 text-decoration-none ${activeSection === 'explore' ? 'fw-semibold' : ''}">Explore climbs</a>
-            <a href="#wiki/cycling" class="d-block py-1 text-decoration-none ${activeSection === 'wiki-cycling' ? 'fw-semibold' : ''}">Wiki</a>
+            ${links}
           </div>
-        </div>
-
-        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ${(activeSection.startsWith('running') || activeSection === 'wiki-running') ? 'active' : ''}"
-           data-bs-toggle="collapse" href="#nav-running" role="button"
-           aria-expanded="${(activeSection.startsWith('running') || activeSection === 'wiki-running') ? 'true' : 'false'}" aria-controls="nav-running">
-          🏃 Running
-          <span class="chevron">›</span>
-        </a>
-        <div class="collapse ${(activeSection.startsWith('running') || activeSection === 'wiki-running') ? 'show' : ''}" id="nav-running">
-          <div class="list-group-item border-0 px-4 py-1">
-            <a href="#feed/running" class="d-block py-1 text-decoration-none ${activeSection === 'running-feed' ? 'fw-semibold' : ''}">Activity feed</a>
-            <a href="#statistics/running" class="d-block py-1 text-decoration-none ${activeSection === 'running-statistics' ? 'fw-semibold' : ''}">Statistics</a>
-            <a href="#wiki/running" class="d-block py-1 text-decoration-none ${activeSection === 'wiki-running' ? 'fw-semibold' : ''}">Wiki</a>
-          </div>
-        </div>
-
-        <a class="list-group-item list-group-item-action d-flex justify-content-between align-items-center ${(activeSection.startsWith('hiking') || activeSection === 'wiki-hiking') ? 'active' : ''}"
-           data-bs-toggle="collapse" href="#nav-hiking" role="button"
-           aria-expanded="${(activeSection.startsWith('hiking') || activeSection === 'wiki-hiking') ? 'true' : 'false'}" aria-controls="nav-hiking">
-          🥾 Hiking
-          <span class="chevron">›</span>
-        </a>
-        <div class="collapse ${(activeSection.startsWith('hiking') || activeSection === 'wiki-hiking') ? 'show' : ''}" id="nav-hiking">
-          <div class="list-group-item border-0 px-4 py-1">
-            <a href="#feed/hiking" class="d-block py-1 text-decoration-none ${activeSection === 'hiking-feed' ? 'fw-semibold' : ''}">Activity feed</a>
-            <a href="#statistics/hiking" class="d-block py-1 text-decoration-none ${activeSection === 'hiking-statistics' ? 'fw-semibold' : ''}">Statistics</a>
-            <a href="#wiki/hiking" class="d-block py-1 text-decoration-none ${activeSection === 'wiki-hiking' ? 'fw-semibold' : ''}">Wiki</a>
-          </div>
-        </div>
+        </div>`;
+        }).join('')}
 
         <a href="#parameters" class="list-group-item list-group-item-action ${activeSection === 'parameters' ? 'active' : ''}">⚙️ Parameters</a>
       </div>

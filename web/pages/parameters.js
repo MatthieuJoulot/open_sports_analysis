@@ -1,4 +1,5 @@
 import { fetchConfig, saveConfig, importFiles, scanHistory, fetchHistoryScanStatus, downloadHistory, fetchHistoryDownloadStatus } from '../utils/api.js';
+import { SPORTS } from '../utils/sports.js';
 
 export async function renderParameters() {
   const app = document.getElementById('app');
@@ -26,6 +27,18 @@ export async function renderParameters() {
             <div class="form-check form-switch mb-3">
               <input class="form-check-input" type="checkbox" id="cfg-sync_latest">
               <label class="form-check-label" for="cfg-sync_latest">Fast fetch (only fetch the latest activities; untick to walk the whole history)</label>
+            </div>
+
+            <div class="mb-3">
+              <label class="form-label">Sports shown in the app</label>
+              <div class="d-flex flex-wrap gap-3" id="cfg-sports">
+                ${Object.entries(SPORTS).map(([key, meta]) => `
+                  <div class="form-check mb-0">
+                    <input class="form-check-input cfg-sport" type="checkbox" value="${key}" id="cfg-sport-${key}">
+                    <label class="form-check-label" for="cfg-sport-${key}">${meta.icon} ${meta.label}</label>
+                  </div>`).join('')}
+              </div>
+              <div class="form-text">Unticked sports stay in the database but are hidden from the sidebar, feed and statistics.</div>
             </div>
 
             <a class="small text-decoration-none" data-bs-toggle="collapse" href="#advanced-paths" role="button">Advanced paths</a>
@@ -129,6 +142,7 @@ export async function renderParameters() {
         health_data_dir: document.getElementById('cfg-health_data_dir').value.trim(),
         garmindb_cli: document.getElementById('cfg-garmindb_cli').value.trim(),
         sync_latest: document.getElementById('cfg-sync_latest').checked,
+        sports: [...document.querySelectorAll('.cfg-sport:checked')].map(cb => cb.value),
       };
       for (const f of ['activities_db', 'garmin_db', 'fit_dir', 'personal_info_json']) {
         payload[f] = document.getElementById('cfg-' + f).value.trim();
@@ -366,6 +380,10 @@ function fillForm(status) {
   document.getElementById('cfg-health_data_dir').value = values.health_data_dir || '';
   document.getElementById('cfg-garmindb_cli').value = values.garmindb_cli || '';
   document.getElementById('cfg-sync_latest').checked = values.sync_latest !== false;
+  const enabledSports = Array.isArray(values.sports) ? values.sports : Object.keys(SPORTS);
+  for (const cb of document.querySelectorAll('.cfg-sport')) {
+    cb.checked = enabledSports.includes(cb.value);
+  }
   for (const f of ['activities_db', 'garmin_db', 'fit_dir', 'personal_info_json']) {
     document.getElementById('cfg-' + f).value = values[f] || '';
   }

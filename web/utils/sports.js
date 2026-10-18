@@ -4,6 +4,7 @@ export const SPORTS = {
   cycling: { label: 'Cycling', icon: '🚴', pace: false, climbs: true },
   running: { label: 'Running', icon: '🏃', pace: true, climbs: false },
   hiking: { label: 'Hiking', icon: '🥾', pace: true, climbs: false },
+  rowing: { label: 'Rowing', icon: '🚣', pace: false, climbs: false },
 };
 
 // Garmin DB names grouped under one app-level sport.

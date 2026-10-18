@@ -36,12 +36,19 @@ SPORTS = {
         "efforts": [],
         "climbs": False,
     },
+    "rowing": {
+        "label": "Rowing",
+        "icon": "🚣",
+        "pace": False,
+        "efforts": [500, 1000, 2000, 5000, 10000],
+        "climbs": False,
+    },
 }
 
 # Garmin DB sport names grouped under a single app-level sport.
 ALIASES = {"walking": "hiking"}
 
-DEFAULT_ENABLED = ["cycling", "running", "hiking"]
+DEFAULT_ENABLED = ["cycling", "running", "hiking", "rowing"]
 
 
 def canon(sport):

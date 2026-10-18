@@ -23,7 +23,7 @@ DEFAULTS = {
     "media_dir": "",
     "port": 8080,
     "sync_latest": True,
-    "sports": ["cycling", "running", "hiking"],
+    "sports": ["cycling", "running", "hiking", "rowing"],
 }
 
 # Preferred env var prefix is OPEN_SPORTS_ANALYSIS_*; the legacy
