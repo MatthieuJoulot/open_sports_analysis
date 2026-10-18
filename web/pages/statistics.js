@@ -266,8 +266,9 @@ function renderAll() {
   } else {
     renderRecords();
   }
-  // Climb profile + climbing records are cycling-only sections.
-  if (sport === null || sport === 'cycling') {
+  // Climb profile + climbing records are cycling-only sections; the
+  // Overall page mixes sports, so they stay off it entirely.
+  if (sport === 'cycling') {
     renderProfileHtml();
     mountProfileChart();
   } else {
@@ -275,7 +276,7 @@ function renderAll() {
   }
   renderCharts();
   const climbsEl = document.getElementById('stats-climbs');
-  if (sport === null || sport === 'cycling') {
+  if (sport === 'cycling') {
     renderClimbs();
   } else if (climbsEl) {
     climbsEl.innerHTML = '';
@@ -919,10 +920,11 @@ function renderCharts() {
   renderGradeHr();
   renderHrPace(acts);
   renderVo2();
-  // Weather correlation is a cycling analysis; foot sports have no
-  // meaningful temperature × altitude speed model.
+  // Weather correlation is a single-sport analysis; on the Overall page
+  // the dots would mix incomparable sports. Foot sports have no
+  // meaningful temperature × altitude speed model either.
   const weatherHolder = document.getElementById('stats-weather');
-  if (isPaceSport()) weatherHolder.innerHTML = '';
+  if (sport === null || isPaceSport()) weatherHolder.innerHTML = '';
   else renderWeather(acts);
   renderYoY(acts);
 
@@ -1317,19 +1319,21 @@ async function renderGpsHeatmap() {
       tracksData.push(latlngs);
     }
     const cellKey = (lat, lon, size) => `${Math.floor(lat / size)}:${Math.floor(lon / size)}`;
+    // Cluster tracks by their start point's grid cell; each pin keeps the
+    // union bounds of its member tracks so clicking zooms to where the
+    // tracks actually are (a floor(mean) cell can land on empty space).
     const clusterAt = size => {
       const cells = {};
-      for (const ll of tracksData) {
+      tracksData.forEach((ll, ti) => {
         const k = cellKey(ll[0][0], ll[0][1], size);
-        cells[k] = cells[k] || { lat: 0, lon: 0, n: 0 };
+        cells[k] = cells[k] || { lat: 0, lon: 0, n: 0, bounds: L.latLngBounds() };
         cells[k].lat += ll[0][0]; cells[k].lon += ll[0][1]; cells[k].n++;
-      }
-      return Object.values(cells).map(c => ({
+        for (const p of ll) cells[k].bounds.extend(p);
+      });
+      return Object.entries(cells).map(([k, c]) => ({
         lat: c.lat / c.n, lon: c.lon / c.n, n: c.n,
-        cell: L.latLngBounds(
-          [Math.floor((c.lat) / size) * size, Math.floor((c.lon) / size) * size],
-          [(Math.floor((c.lat) / size) + 1) * size, (Math.floor((c.lon) / size) + 1) * size],
-        ),
+        cell: c.bounds.pad(0.05),
+        key: k, size,
       }));
     };
     const countryPins = clusterAt(5);      // ~550 km cells
@@ -1343,7 +1347,12 @@ async function renderGpsHeatmap() {
     });
     const pin = (c, big) => {
       const m = L.marker([c.lat, c.lon], { icon: pinIcon(c.n, big) });
-      m.on('click', () => map.fitBounds(c.cell, { maxZoom: 13 }));
+      m.on('click', () => {
+        // Zoom into the cluster's real bounds — at least one level past
+        // the current pin layer so tracks or finer pins appear.
+        map.fitBounds(c.cell, { maxZoom: 13 });
+      });
+      m.bindTooltip(`${c.n} track${c.n === 1 ? '' : 's'} — click to zoom in`);
       return m;
     };
     for (const c of countryPins) pin(c, true).addTo(pinLayer);
@@ -2060,7 +2069,8 @@ function renderVo2() {
 
 // Year over year: monthly distance per calendar year, ticked via
 // checkboxes. In all time this is the comparison view; shorter periods
-// still show every year for reference.
+// still show every year for reference. On the Overall page each year's
+// bar stacks per sport and the tooltip breaks the month down by sport.
 let yoySelected = null;   // Set of ticked years; null = auto (last two)
 function renderYoY(acts) {
   const holder = document.getElementById('stats-yoy');
@@ -2078,6 +2088,21 @@ function renderYoY(acts) {
   // Stable per-year colors: keyed by the year's position in the full
   // list, so adding/removing years never recolors existing bars.
   const yearColor = yearColors(years);
+  const isAll = sport === null;
+  const SPORT_COLORS = { cycling: '#0d6efd', running: '#fd7e14', hiking: '#198754' };
+  const sportColor = s => SPORT_COLORS[s] || '#adb5bd';
+  const sportIcon = s => s === 'cycling' ? '🚴' : s === 'running' ? '🏃' : s === 'hiking' ? '🥾' : '🏅';
+  const sportsPresent = [...new Set(acts.map(a => a.sport || 'cycling'))].sort();
+
+  // perYearSport[y][month][sport] = km, for the tooltip breakdown.
+  const perYearSport = {};
+  for (const a of acts) {
+    const y = a.start_time.slice(0, 4);
+    const m = parseInt(a.start_time.slice(5, 7), 10) - 1;
+    const s = a.sport || 'cycling';
+    perYearSport[y] = perYearSport[y] || Array.from({ length: 12 }, () => ({}));
+    perYearSport[y][m][s] = (perYearSport[y][m][s] || 0) + (a.distance || 0);
+  }
 
   holder.innerHTML = sectionCard('yoy', 'Year over year — distance', `
           ${years.map(y => `
@@ -2086,32 +2111,80 @@ function renderYoY(acts) {
               <label class="form-check-label small" for="yoy-year-${y}"><span style="color:${yearColor[y]};">■</span> ${y}</label>
             </div>`).join('')}
         </div>
-        <div style="height: 280px; position: relative;"><canvas id="stats-yoy-chart"></canvas></div>`);
+        <div style="height: 280px; position: relative;"><canvas id="stats-yoy-chart"></canvas></div>
+        ${isAll ? '<p class="small text-muted mb-0 mt-2">Bars stack per sport · hover a month for the per-sport breakdown.</p>' : ''}`);
   bindSectionToggles(holder);
 
   const draw = () => {
     const active = years.filter(y => yoySelected.has(y));
     const labels = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
     const datasets = [];
-    active.forEach((y, i) => {
-      const monthly = new Array(12).fill(0);
-      for (const a of acts) {
-        if (a.start_time.slice(0, 4) !== y) continue;
-        monthly[parseInt(a.start_time.slice(5, 7), 10) - 1] += a.distance || 0;
-      }
-      datasets.push({
-        label: y, data: monthly.map(v => +v.toFixed(1)),
-        backgroundColor: yearColor[y], borderColor: yearColor[y],
+    if (isAll) {
+      // One stacked dataset per (year, sport) pair, sports of the same
+      // year grouped side by side and stacked per sport.
+      active.forEach(y => {
+        for (const s of sportsPresent) {
+          const monthly = new Array(12).fill(0);
+          let any = false;
+          for (const a of acts) {
+            if (a.start_time.slice(0, 4) !== y || (a.sport || 'cycling') !== s) continue;
+            monthly[parseInt(a.start_time.slice(5, 7), 10) - 1] += a.distance || 0;
+            any = true;
+          }
+          if (!any) continue;
+          datasets.push({
+            label: `${y} · ${sportIcon(s)} ${s}`,
+            data: monthly.map(v => +v.toFixed(1)),
+            backgroundColor: sportColor(s),
+            borderColor: sportColor(s),
+            stack: y,
+          });
+        }
       });
-    });
+    } else {
+      active.forEach(y => {
+        const monthly = new Array(12).fill(0);
+        for (const a of acts) {
+          if (a.start_time.slice(0, 4) !== y) continue;
+          monthly[parseInt(a.start_time.slice(5, 7), 10) - 1] += a.distance || 0;
+        }
+        datasets.push({
+          label: y, data: monthly.map(v => +v.toFixed(1)),
+          backgroundColor: yearColor[y], borderColor: yearColor[y],
+        });
+      });
+    }
     if (yoyChart) yoyChart.destroy();
     yoyChart = new window.Chart(document.getElementById('stats-yoy-chart').getContext('2d'), {
       type: 'bar',
       data: { labels, datasets },
       options: {
         responsive: true, maintainAspectRatio: false,
-        plugins: { legend: { position: 'top' } },
-        scales: { x: { stacked: false }, y: { beginAtZero: true, title: { display: true, text: 'Distance (km)' } } },
+        plugins: {
+          legend: {
+            position: 'top',
+            labels: { boxWidth: 12 },
+            // Overall page: one legend entry per sport, not per (year,sport).
+            labels: isAll
+              ? { boxWidth: 12, generateLabels: () => sportsPresent.map(s => ({ text: `${sportIcon(s)} ${s}`, fillStyle: sportColor(s), strokeStyle: sportColor(s) })) }
+              : { boxWidth: 12 },
+          },
+          tooltip: {
+            callbacks: {
+              label: c => {
+                const base = `${c.dataset.label}: ${c.parsed.y.toFixed(1)} km`;
+                if (!isAll) return base;
+                // Per-sport breakdown for the hovered month+year.
+                const y = c.dataset.stack;
+                const detail = Object.entries(perYearSport[y]?.[c.dataIndex] || {})
+                  .sort((a, b) => b[1] - a[1])
+                  .map(([s, km]) => `${sportIcon(s)} ${km.toFixed(1)} km`);
+                return detail.length ? `${y} — ${detail.join(' · ')}` : base;
+              },
+            },
+          },
+        },
+        scales: { x: { stacked: isAll }, y: { beginAtZero: true, title: { display: true, text: 'Distance (km)' }, stacked: isAll } },
       }
     });
   };
@@ -2159,7 +2232,10 @@ function renderTrainingSections() {
   if (!acts.length) { holder.innerHTML = ''; return; }
 
   const norm = statsData.hr_normalization;
-  const withNorm = (norm && norm.predictors && norm.predictors.length)
+  // Normalized HR and goals are single-sport views; off the Overall
+  // page where mixed sports make the numbers meaningless.
+  const showNorm = sport !== null && norm && norm.predictors && norm.predictors.length;
+  const withNorm = showNorm
     ? acts.map(a => ({ a, v: normHrOf(a, norm) })).filter(r => r.v != null)
     : [];
 
@@ -2173,7 +2249,7 @@ function renderTrainingSections() {
     ${withNorm.length >= 10 ? sectionCard('training-normhr', 'Normalized HR — fitness trend', `
         <div style="height: 280px; position: relative;"><canvas id="norm-chart"></canvas></div>
         <div class="small text-muted mt-1" id="norm-note"></div>`) : ''}
-    ${sectionCard('training-goals', 'Goals', `<div id="goals-body"></div>`)}
+    ${sport !== null ? sectionCard('training-goals', 'Goals', `<div id="goals-body"></div>`) : ''}
   `;
   bindSectionToggles(holder);
 
@@ -2181,7 +2257,7 @@ function renderTrainingSections() {
   renderFitness(acts);
   renderTrainingLoad(acts);
   if (withNorm.length >= 10) renderNormHr(withNorm, norm);
-  renderGoals(acts);
+  if (sport !== null) renderGoals(acts);
   attachFullscreen(document.getElementById('fitness-chart')?.closest('.card'), document.getElementById('fitness-chart')?.parentElement);
   if (document.getElementById('norm-chart')) {
     attachFullscreen(document.getElementById('norm-chart').closest('.card'), document.getElementById('norm-chart').parentElement);
