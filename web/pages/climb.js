@@ -335,7 +335,7 @@ function renderSegmentMap(container, segment) {
 
   const map = L.map(container);
   container._climbMap = map;
-  baseLayer().then(l => l.addTo(map));
+  baseLayer('osm', { center: points[0] }).then(l => l.addTo(map));
   L.polyline(points, { color: '#dc3545', weight: 5, opacity: 0.9 }).addTo(map);
   L.circleMarker(points[0], { radius: 7, color: '#ffffff', fillColor: '#198754', fillOpacity: 1, weight: 2 }).addTo(map).bindPopup('Start');
   L.circleMarker(points[points.length - 1], { radius: 7, color: '#ffffff', fillColor: '#dc3545', fillOpacity: 1, weight: 2 }).addTo(map).bindPopup('Finish');

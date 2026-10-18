@@ -245,7 +245,7 @@ async function loadMiniMap(el) {
   } else {
     map.setView([20, 0], 2);
   }
-  baseLayer().then(l => l.addTo(map));
+  baseLayer('osm', { center: [fallbackLat || 20, fallbackLon || 0] }).then(l => l.addTo(map));
 
   try {
     const res = await fetch(`/api/activity/${id}/polyline`);

@@ -863,9 +863,14 @@ function renderLapsTable(laps, isPace = false) {
 }
 
 function renderMap(records, climbs, sport = 'cycling') {
+  const located0 = records.filter(p => p.position_lat && p.position_long);
   if (!map) {
     map = L.map('map');
-    baseLayer().then(l => l.addTo(map));
+    const center = located0.length
+      ? [located0.reduce((s, p) => s + p.position_lat, 0) / located0.length,
+         located0.reduce((s, p) => s + p.position_long, 0) / located0.length]
+      : null;
+    baseLayer('osm', { center }).then(l => l.addTo(map));
   }
 
   map.eachLayer(layer => {
@@ -874,7 +879,7 @@ function renderMap(records, climbs, sport = 'cycling') {
     }
   });
 
-  const located = records.filter(p => p.position_lat && p.position_long);
+  const located = located0;
   const routePoints = located.map(p => [p.position_lat, p.position_long]);
   if (routePoints.length === 0) return;
 

@@ -86,9 +86,11 @@ export function openSegmentEditor({ activityId, records, startDistanceM, endDist
 function initMap({ activityId, records, startDistanceM, endDistanceM, onSave }) {
   const mapContainer = document.getElementById('segment-editor-map');
   const map = L.map(mapContainer);
-  baseLayer().then(l => l.addTo(map));
+  const route0 = records.filter(r => r.position_lat != null && r.position_long != null);
+  const center0 = route0.length ? [route0[0].position_lat, route0[0].position_long] : null;
+  baseLayer('osm', { center: center0 }).then(l => l.addTo(map));
 
-  const route = records.filter(r => r.position_lat != null && r.position_long != null);
+  const route = route0;
   const points = route.map(r => [r.position_lat, r.position_long]);
 
   if (points.length < 2) {

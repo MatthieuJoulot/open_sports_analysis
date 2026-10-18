@@ -53,7 +53,11 @@ export async function renderParameters() {
                   <input class="form-control form-control-sm text-muted" id="cfg-basemap_dark" placeholder="e.g. cache/basemap-dark.pmtiles">
                 </div>
               </div>
-              <div class="form-text">Maps load from these files first (instant, offline) and fall back to online tiles when a file is missing or a tile is out of range. Build extracts at <a href="https://protomaps.com/docs/build" target="_blank" rel="noopener">protomaps.com</a> or grab a country extract from <a href="https://data.source.coop/protomaps/openstreetmap/tiles/" target="_blank" rel="noopener">protomaps tiles</a>.</div>
+              <div class="form-text">
+                Maps load from local vector archives first (instant, offline) and fall back to online tiles when needed.
+                Activity areas without coverage are extracted automatically in the background (<code>pmtiles</code> CLI required: <code>brew install pmtiles</code>).
+              </div>
+              <div id="basemap-regions" class="mt-2 small"></div>
             </div>
 
             <a class="small text-decoration-none" data-bs-toggle="collapse" href="#advanced-paths" role="button">Advanced paths</a>
@@ -208,6 +212,43 @@ export async function renderParameters() {
   });
 
   setupHistorySection();
+  renderBasemapRegions();
+}
+
+async function renderBasemapRegions() {
+  const holder = document.getElementById('basemap-regions');
+  if (!holder) return;
+  const draw = (cfg) => {
+    const regs = cfg.regions || [];
+    if (!regs.length) {
+      holder.innerHTML = '<span class="text-muted">No auto-extracted regions yet — they appear when an activity outside current coverage is viewed.</span>';
+      return;
+    }
+    const fmtSize = b => b > 1e9 ? (b / 1e9).toFixed(1) + ' GB' : b > 1e6 ? (b / 1e6).toFixed(1) + ' MB' : b > 0 ? (b / 1e3).toFixed(0) + ' kB' : '0';
+    const status = r => {
+      if (r.status === 'extracting') return '<span class="text-primary">extracting…</span>';
+      if (r.status === 'queued') return '<span class="text-muted">queued</span>';
+      if (r.status === 'failed') return `<span class="text-danger" title="${(r.error || '').replace(/"/g, '&quot;')}">failed</span>`;
+      return (r.size_bytes > 0) ? `<span class="text-success">${fmtSize(r.size_bytes)}</span>` : '<span class="text-muted">pending</span>';
+    };
+    holder.innerHTML = '<div class="mb-1 fw-semibold">Auto-extracted regions</div>' +
+      regs.map(r => {
+        const [w, s, e, n] = r.bbox;
+        return `<div class="d-flex justify-content-between">
+          <span>${r.region} <span class="text-muted">(${w.toFixed(1)}, ${s.toFixed(1)}, ${e.toFixed(1)}, ${n.toFixed(1)})</span></span>
+          <span>${status(r)}</span>
+        </div>`;
+      }).join('');
+    if (cfg.current || (cfg.queued || []).length) {
+      setTimeout(() => {
+        fetch('/api/map-config').then(r => r.json()).then(draw).catch(() => {});
+      }, 4000);
+    }
+  };
+  try {
+    const r = await fetch('/api/map-config');
+    draw(await r.json());
+  } catch (e) { /* leave the hint */ }
 }
 
 function setupHistorySection() {

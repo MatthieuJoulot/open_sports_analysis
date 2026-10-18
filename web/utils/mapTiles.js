@@ -4,19 +4,20 @@
 // loads can be dropped for good when the tab's main thread stalls —
 // heavy pages can block the worker IPC handshake).
 //
-// The backend exposes /api/map-config {local: {light, dark}} and serves
-// the configured archive at /api/basemap/<light|dark> with HTTP ranges.
-// Vector rendering runs through maplibre-gl, bridged into Leaflet with
-// @maplibre/maplibre-gl-leaflet (both loaded in index.html); styles are
-// built from @protomaps/basemaps (global `basemaps`).
+// The backend exposes /api/map-config with per-theme files and
+// auto-extracted regions (each with its bbox). It serves archives at
+// /api/basemap/<light|dark> and /api/basemap/region/<name> with HTTP
+// ranges. Vector rendering runs through maplibre-gl, bridged into
+// Leaflet with @maplibre/maplibre-gl-leaflet (both loaded in
+// index.html); styles come from @protomaps/basemaps (global `basemaps`).
 
 let mapConfigPromise = null;
 
 async function getMapConfig() {
   if (!mapConfigPromise) {
     mapConfigPromise = fetch('/api/map-config')
-      .then(r => r.ok ? r.json() : { local: {} })
-      .catch(() => ({ local: {} }));
+      .then(r => r.ok ? r.json() : { local: {}, regions: [] })
+      .catch(() => ({ local: {}, regions: [] }));
   }
   return mapConfigPromise;
 }
@@ -48,7 +49,7 @@ function remoteLayer(kind) {
   return L.tileLayer(def.url, def.options);
 }
 
-// Maplibre style JSON for the local vector archive. The pmtiles.js
+// Maplibre style JSON for a local vector archive. The pmtiles.js
 // Protocol bridges z/x/y tile and TileJSON requests to HTTP ranges
 // against the backend endpoint. MapLibre requires plain ArrayBuffers
 // where tilev4 hands back Uint8Arrays, hence the re-wrap.
@@ -69,10 +70,11 @@ function ensurePmtilesProtocol() {
   protocolRegistered = true;
 }
 
-function protomapsStyle(flavor) {
+function protomapsStyle(url) {
   ensurePmtilesProtocol();
   const sourceId = 'pmtiles';
-  const palette = window.basemaps[flavor === 'dark' ? 'DARK' : 'LIGHT'];
+  const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  const palette = window.basemaps[dark ? 'DARK' : 'LIGHT'];
   const layers = window.basemaps.layers(sourceId, palette, { lang: 'fr' });
   return {
     version: 8,
@@ -80,11 +82,29 @@ function protomapsStyle(flavor) {
     sources: {
       [sourceId]: {
         type: 'vector',
-        url: 'pmtiles:///api/basemap/' + (flavor === 'dark' ? 'dark' : 'light'),
+        url: 'pmtiles://' + url,
       },
     },
     layers,
   };
+}
+
+// Local archive URL to use for a map centered/bounded at `opts`:
+// a region extract covering the center if one exists, else the theme
+// file, else null (no local basemap available for this view).
+function localUrlFor(cfg, opts) {
+  const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
+  const flavor = dark ? 'dark' : 'light';
+  if (opts?.center) {
+    const [lat, lon] = opts.center;
+    const region = (cfg.regions || []).find(r => {
+      const [w, s, e, n] = r.bbox;
+      return lon >= w && lon <= e && lat >= s && lat <= n && (r.size_bytes || 0) > 0;
+    });
+    if (region) return '/api/basemap/region/' + encodeURIComponent(region.region);
+  }
+  if (cfg.local?.[flavor]) return '/api/basemap/' + flavor;
+  return null;
 }
 
 // Vector layer wrapped with a watchdog: if the maplibre source has not
@@ -92,9 +112,9 @@ function protomapsStyle(flavor) {
 // recovers, leaving a blank map), swap in the remote raster basemap.
 const LOAD_TIMEOUT = 15000;
 
-function vectorLayerWithWatchdog(flavor, remoteKind) {
+function vectorLayerWithWatchdog(url, remoteKind) {
   const group = L.layerGroup();
-  let gl = new L.MaplibreGL({ style: protomapsStyle(flavor), preserveDrawingBuffer: true });
+  let gl = new L.MaplibreGL({ style: protomapsStyle(url), preserveDrawingBuffer: true });
   group.addLayer(gl);
   const timer = setTimeout(() => {
     const map = gl._map;
@@ -121,16 +141,18 @@ function vectorLayerWithWatchdog(flavor, remoteKind) {
 
 /**
  * Basemap for a Leaflet map. kind: 'osm' (colour streets) or 'gray'
- * (muted canvas following the theme). Local PMTiles when configured,
- * remote otherwise. Resolves to a Leaflet layer.
+ * (muted canvas following the theme). opts: {center: [lat, lon]} —
+ * picks the local archive whose region covers that point. Local
+ * PMTiles when available, remote otherwise. Resolves to a Leaflet layer.
  */
-export async function baseLayer(kind = 'osm') {
+export async function baseLayer(kind = 'osm', opts = {}) {
   const dark = document.documentElement.getAttribute('data-bs-theme') === 'dark';
   const flavor = dark ? 'dark' : 'light';
   const cfg = await getMapConfig();
-  if (cfg.local?.[flavor] && window.L?.MaplibreGL && window.maplibregl && window.basemaps) {
+  const localUrl = localUrlFor(cfg, opts);
+  if (localUrl && window.L?.MaplibreGL && window.maplibregl && window.basemaps) {
     try {
-      return vectorLayerWithWatchdog(flavor, kind);
+      return vectorLayerWithWatchdog(localUrl, kind);
     } catch (e) {
       return remoteLayer(kind);
     }

@@ -244,7 +244,7 @@ function applyHeatBasemap() {
     }).addTo(heatMap);
   } else {
     heatBaseLayer = null;
-    baseLayer('gray').then(l => { if (heatBaseLayer === null) { heatBaseLayer = l; l.addTo(heatMap); } });
+    baseLayer('gray', { center: [46, 6] }).then(l => { if (heatBaseLayer === null) { heatBaseLayer = l; l.addTo(heatMap); } });
     heatRefLayer = L.tileLayer(dark
       ? 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}'
       : 'https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}', {
@@ -317,7 +317,7 @@ function renderClimbsMap() {
   const div = document.getElementById('climbs-map');
   if (!climbsMap) {
     climbsMap = L.map(div);
-    baseLayer().then(l => l.addTo(climbsMap));
+    baseLayer('osm', { center: [46, 6] }).then(l => l.addTo(climbsMap));
     climbsMapLayer = L.layerGroup().addTo(climbsMap);
   }
   climbsMap.invalidateSize();

@@ -24,6 +24,7 @@ import climb_groups
 import config
 import osm_lookup
 import regions
+import basemap_regions
 import segment_store
 import statistics
 import sports as sports_registry
@@ -228,6 +229,10 @@ class Handler(SimpleHTTPRequestHandler):
             return
         if path.startswith("/api/activity/") and path.endswith("/details"):
             activity_id = path.split("/")[-2]
+            conn = _connect_db()
+            if conn is not None:
+                basemap_regions.check_activity_region(conn, activity_id)
+                conn.close()
             self._send_json(json.dumps(get_activity_details(activity_id)))
             return
         if path.startswith("/api/activity/") and path.endswith("/records"):
@@ -519,6 +524,8 @@ class Handler(SimpleHTTPRequestHandler):
             except Exception as exc:
                 self.send_error(400, f"Could not save config: {exc}")
                 return
+            basemap_regions.refresh_theme_bounds()
+            basemap_regions.invalidate_region_config_cache()
             self._send_json(json.dumps(get_config_status()))
             return
 
@@ -602,13 +609,25 @@ class Handler(SimpleHTTPRequestHandler):
     # headless renders and a much snappier live page.
 
     def _serve_basemap(self, path):
-        """Serve the configured PMTiles basemap files with HTTP range
-        support (the pmtiles client reads chunks, never the whole file)."""
-        which = path.split("/")[-1]           # 'light' or 'dark'
-        f = _basemap_file(which)
-        if not f:
-            self.send_error(404, f"no {which} basemap configured")
-            return
+        """Serve a configured PMTiles basemap with HTTP range support
+        (the pmtiles client reads chunks, never the whole file).
+
+        Path forms: /api/basemap/<light|dark> (theme files from config)
+        or /api/basemap/region/<name> (auto-extracted regions)."""
+        parts = [p for p in path.split("/") if p]
+        # parts: api, basemap, [region,] <which>
+        if len(parts) == 4 and parts[2] == "region":
+            which = parts[3]
+            f = basemap_regions.region_path(which)
+            if not f.is_file():
+                self.send_error(404, f"region basemap not found: {which}")
+                return
+        else:
+            which = parts[-1]           # 'light' or 'dark'
+            f = _basemap_file(which)
+            if not f:
+                self.send_error(404, f"no {which} basemap configured")
+                return
         size = f.stat().st_size
         rng = self.headers.get("Range")
         if rng:
@@ -2041,13 +2060,55 @@ def _basemap_file(which):
     return p if p.is_file() else None
 
 
+def _queue_missing_basemap_regions():
+    """After a fetch/analyze, find activities whose GPS falls outside
+    every local basemap region and queue those areas for extraction.
+    Clustered by 4-degree cells so one region covers many activities."""
+    conn = _connect_db()
+    if conn is None:
+        return
+    try:
+        rows = conn.execute(
+            """
+            SELECT a.activity_id,
+                   MIN(r.position_lat) AS s, MAX(r.position_lat) AS n,
+                   MIN(r.position_long) AS w, MAX(r.position_long) AS e
+            FROM activities a
+            JOIN activity_records r ON r.activity_id = a.activity_id
+            WHERE r.position_lat IS NOT NULL AND r.position_long IS NOT NULL
+            GROUP BY a.activity_id
+            """
+        ).fetchall()
+    except Exception:
+        conn.close()
+        return
+    conn.close()
+    # Group activities by coarse cell, then check each cell's centroid.
+    cells = {}
+    for row in rows:
+        if row["n"] is None or row["e"] is None:
+            continue
+        key = (math.floor(row["n"] / 4), math.floor(row["e"] / 4))
+        b = cells.setdefault(key, [180, 90, -180, -90])
+        b[0] = min(b[0], row["w"]); b[1] = min(b[1], row["s"])
+        b[2] = max(b[2], row["e"]); b[3] = max(b[3], row["n"])
+    for b in cells.values():
+        w, s, e, n = b
+        lat, lon = (s + n) / 2, (w + e) / 2
+        if basemap_regions.covering_region(lat, lon) is None:
+            basemap_regions.ensure_region(lat, lon, bounds=[w, s, e, n])
+
+
 def get_map_config():
-    """Tells the frontend whether local PMTiles basemaps are available."""
+    """Tells the frontend whether local PMTiles basemaps are available:
+    per-theme files and auto-extracted regions (with their bboxes)."""
+    data = basemap_regions.list_regions()
     return {
         "local": {
             "light": bool(_basemap_file("light")),
             "dark": bool(_basemap_file("dark")),
         },
+        "regions": data["regions"],
     }
 
 
@@ -2523,6 +2584,9 @@ def run_analyze():
     new_ids = {a.get("activity_id") for a in new_data.get("activities", [])}
     new_climb_count = sum(a.get("climb_count", 0) for a in new_data.get("activities", []))
 
+    # Queue basemap extracts for any area not covered locally yet.
+    _queue_missing_basemap_regions()
+
     _sync_log("done", "analysis complete")
     return {
         "ok": True,
@@ -2535,6 +2599,7 @@ def run_analyze():
 
 
 if __name__ == "__main__":
+    basemap_regions.refresh_theme_bounds()
     port = config.PORT
     print(f"Serving at http://127.0.0.1:{port}/")
     from http.server import ThreadingHTTPServer
