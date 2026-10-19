@@ -28,7 +28,15 @@ cd open_sports_analysis
 conda create -n opensports python=3.12 -y
 conda activate opensports
 pip install garmindb
+pip install pmtiles
 ```
+
+The `pmtiles` package powers the offline basemaps: the first time you
+view an activity in an area with no local map yet, the server quietly
+extracts that region from the public protomaps archive in the
+background (a few MB, z0–12). Subsequent views load instantly and work
+offline. Everything works without it too — the map just keeps using
+online tiles.
 
 The first `garmindb_cli.py` run fails with `Missing or bad config` until the config file exists. Create it:
 

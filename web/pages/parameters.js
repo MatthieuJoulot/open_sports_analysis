@@ -55,7 +55,7 @@ export async function renderParameters() {
               </div>
               <div class="form-text">
                 Maps load from local vector archives first (instant, offline) and fall back to online tiles when needed.
-                Activity areas without coverage are extracted automatically in the background (<code>pmtiles</code> CLI required: <code>brew install pmtiles</code>).
+                Activity areas without coverage are extracted automatically in the background.
               </div>
               <div id="basemap-regions" class="mt-2 small"></div>
             </div>

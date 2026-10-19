@@ -222,22 +222,14 @@ def _worker():
             w, s, e, n = region["bbox"]
             out = region_path(name)
             tmp = out.with_suffix(".pmtiles.part")
-            if not shutil.which("pmtiles"):
-                _status[name] = {"status": "failed",
-                                 "error": "pmtiles CLI not installed (brew install pmtiles)"}
-                break
             _status[name] = {"status": "extracting", "started": time.time()}
-            bbox = f"{w},{s},{e},{n}"
             try:
-                res = subprocess.run(
-                    ["pmtiles", "extract", PLANET_URL, str(tmp),
-                     f"--bbox={bbox}", f"--maxzoom={MAX_ZOOM}"],
-                    capture_output=True, text=True, timeout=60 * 60 * 2)
-                if res.returncode != 0 or not tmp.is_file():
-                    _status[name] = {"status": "failed",
-                                     "error": (res.stderr or res.stdout or "extract failed")[:300]}
-                    tmp.unlink(missing_ok=True)
-                    break
+                if shutil.which("pmtiles"):
+                    _extract_cli(w, s, e, n, tmp)
+                else:
+                    _extract_python(w, s, e, n, tmp)
+                if not tmp.is_file():
+                    raise RuntimeError("extract produced no file")
                 tmp.replace(out)
                 region["generated_at"] = time.time()
                 _save(data)
@@ -258,6 +250,125 @@ def _worker():
         with _lock:
             if _current and _current.get("region") == name:
                 _current = None
+
+
+def _extract_cli(w, s, e, n, out):
+    """Region extract via the Go pmtiles CLI (fastest for big areas)."""
+    bbox = f"{w},{s},{e},{n}"
+    res = subprocess.run(
+        ["pmtiles", "extract", PLANET_URL, str(out),
+         f"--bbox={bbox}", f"--maxzoom={MAX_ZOOM}"],
+        capture_output=True, text=True, timeout=60 * 60 * 2)
+    if res.returncode != 0:
+        raise RuntimeError((res.stderr or res.stdout or "extract failed")[:300])
+
+
+def _extract_python(w, s, e, n, out):
+    """Pure-Python extract via the `pmtiles` PyPI package: no external
+    binary needed. Streams only the relevant directory pages and tile
+    bytes of the planet archive over HTTP ranges."""
+    try:
+        from concurrent.futures import ThreadPoolExecutor
+        import urllib.request
+
+        from pmtiles.reader import Reader
+        from pmtiles.tile import (deserialize_directory, find_tile,
+                                  zxy_to_tileid)
+        from pmtiles.writer import write
+    except ImportError as exc:
+        raise RuntimeError(
+            f"no pmtiles extractor available ({exc}); "
+            "pip install pmtiles or brew install pmtiles") from exc
+
+    POOL = 8
+
+    class HttpSource:
+        def __init__(self, url):
+            self.url = url
+            self.pool = ThreadPoolExecutor(max_workers=POOL)
+
+        def get_bytes(self, offset, length):
+            req = urllib.request.Request(self.url, headers={
+                "Range": f"bytes={offset}-{offset+length-1}",
+                "User-Agent": "open-sports-analysis/1.0"})
+            with urllib.request.urlopen(req, timeout=90) as r:
+                return r.read()
+
+    def lon_to_x(lon, z):
+        return math.floor((lon + 180) / 360 * (1 << z))
+
+    def lat_to_y(lat, z):
+        la = math.radians(lat)
+        v = math.log(math.tan(math.pi / 4 + la / 2))
+        return math.floor((1 - v / math.pi) / 2 * (1 << z))
+
+    src = HttpSource(PLANET_URL)
+    reader = Reader(src.get_bytes)
+    h = reader.header()
+
+    # Every tile id inside the bbox, all zooms.
+    ids = []
+    for z in range(0, MAX_ZOOM + 1):
+        if z < h["min_zoom"]:
+            continue
+        for x in range(lon_to_x(w, z), lon_to_x(e, z) + 1):
+            for y in range(lat_to_y(n, z), lat_to_y(s, z) + 1):
+                ids.append(zxy_to_tileid(z, x, y))
+    ids.sort()
+
+    # Directory walk with a leaf-dir cache; resolved entries per tile id.
+    root_dir = deserialize_directory(src.get_bytes(h["root_offset"], h["root_length"]))
+    dir_cache = {}
+
+    def lookup(tile_id):
+        entry = find_tile(root_dir, tile_id)
+        if entry is None:
+            return None
+        if entry.run_length == 0:
+            off = h["leaf_directory_offset"] + entry.offset
+            if off not in dir_cache:
+                dir_cache[off] = deserialize_directory(src.get_bytes(off, entry.length))
+            return find_tile(dir_cache[off], tile_id)
+        return entry
+
+    entries = []
+    for tid in ids:
+        entry = lookup(tid)
+        if entry is not None:
+            entries.append((tid, entry.offset, entry.length, entry.run_length))
+
+    # One HTTP range per distinct tile blob (runs share one offset).
+    by_offset = {}
+    for tid, off, length, rl in entries:
+        if rl == 0:
+            continue
+        by_offset.setdefault((off, length), []).append(tid)
+
+    def fetch(item):
+        (off, length), tids = item
+        return (off, length, tids,
+                src.get_bytes(h["tile_data_offset"] + off, length))
+
+    blobs = list(src.pool.map(fetch, list(by_offset.items())))
+    src.pool.shutdown()
+
+    # Local archive: same header shape, bounds/center set to the region.
+    hdr = dict(h)
+    hdr["min_zoom"] = 0
+    hdr["max_zoom"] = MAX_ZOOM
+    hdr["min_lon_e7"] = int(w * 1e7)
+    hdr["min_lat_e7"] = int(s * 1e7)
+    hdr["max_lon_e7"] = int(e * 1e7)
+    hdr["max_lat_e7"] = int(n * 1e7)
+    hdr["center_lon_e7"] = int((w + e) / 2 * 1e7)
+    hdr["center_lat_e7"] = int((s + n) / 2 * 1e7)
+    hdr["center_zoom"] = 0
+    metadata = reader.metadata()
+    with write(str(out)) as w_out:
+        for off, length, tids, data in blobs:
+            for tid in tids:
+                w_out.write_tile(tid, data)
+        w_out.finalize(hdr, metadata)
 
 
 def check_activity_region(conn, activity_id):
