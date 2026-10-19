@@ -1166,8 +1166,8 @@ function renderGraphsChartDeferred(records, sensors, sport = 'cycling') {
     const paceMaxMinPerKm = sport === 'hiking' ? 60 : 15;
     measures.cadence = {
       ...measures.cadence,
-      label: 'Step rate',
-      axisTitle: 'Step rate (spm)',
+      label: 'Cadence',
+      axisTitle: 'Cadence (spm)',
       transform: v => (v != null ? v * 2 : null),
     };
     measures.speed = {
